@@ -2,12 +2,7 @@ import { key } from './hex';
 import type { Renderer } from './render';
 import { attack, confirmUnit, inRange, moveUnit, reachable, undoMove } from './rules';
 import { tileAt, unitAt } from './state';
-import type { Game, Unit } from './types';
-
-/** この時間(ms)以内に同じ駒を続けてクリックすると、ダブルクリックとして扱う */
-const DOUBLE_CLICK_MS = 300;
-/** 移動後の駒を1回クリックしてから、移動を取り消すまでの待ち時間(ダブルクリックを見分けるため) */
-const UNDO_DELAY_MS = 300;
+import type { Game } from './types';
 
 export interface InputDeps {
   canvas: HTMLCanvasElement;
@@ -17,11 +12,9 @@ export interface InputDeps {
 }
 
 export function bindBoardInput({ canvas, renderer, getGame, refresh }: InputDeps): void {
-  let lastUnit: Unit | null = null;
-  let lastTime = 0;
-  let undoTimer: number | undefined;
-
+  // 左クリック(タッチ)の操作
   canvas.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
     const g = getGame();
     if (g.over || g.busy) return;
     const h = renderer.pick(e.clientX, e.clientY);
@@ -34,35 +27,15 @@ export function bindBoardInput({ canvas, renderer, getGame, refresh }: InputDeps
     }
 
     const u = unitAt(g, t.q, t.r);
-    const now = Date.now();
-    const isDouble = !!u && u === lastUnit && now - lastTime < DOUBLE_CLICK_MS;
-    lastUnit = u ?? null;
-    lastTime = now;
-
     const sel = g.selected;
     if (sel) {
+      // 選択中の駒をもう一度クリックすると、その駒の行動を確定する(移動していなければ待機)
       if (u === sel && !sel.acted) {
-        if (isDouble) {
-          window.clearTimeout(undoTimer);
-          confirmUnit(g, sel);
-          g.selected = null;
-          g.reach = null;
-          refresh();
-          return;
-        }
-        if (sel.moved && sel.from) {
-          window.clearTimeout(undoTimer);
-          undoTimer = window.setTimeout(() => {
-            const cur = getGame();
-            const s = cur.selected;
-            if (s && s.moved && !s.acted && s.from) {
-              undoMove(cur, s);
-              cur.reach = reachable(cur, s);
-              refresh();
-            }
-          }, UNDO_DELAY_MS);
-          return;
-        }
+        confirmUnit(g, sel);
+        g.selected = null;
+        g.reach = null;
+        refresh();
+        return;
       }
       if (u && u.side === 'e' && !sel.acted && inRange(g, sel, u)) {
         attack(g, sel, u);
@@ -82,11 +55,24 @@ export function bindBoardInput({ canvas, renderer, getGame, refresh }: InputDeps
     if (u && u.side === 'p' && !(u.moved && u.acted)) {
       g.selected = u;
       g.reach = u.moved ? null : reachable(g, u);
-      g.message = `${g.defs[u.kind].name}を選択。移動先か攻撃対象をタップ。`;
+      g.message = `${g.defs[u.kind].name}を選択。移動先か攻撃対象をタップ。もう一度タップすると行動を確定。`;
     } else {
       g.selected = null;
       g.reach = null;
     }
     refresh();
+  });
+
+  // 右クリック: 選択中の駒の移動を取り消す(攻撃や確定の前だけ)
+  canvas.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const g = getGame();
+    if (g.over || g.busy) return;
+    const s = g.selected;
+    if (s && s.moved && !s.acted && s.from) {
+      undoMove(g, s);
+      g.reach = reachable(g, s);
+      refresh();
+    }
   });
 }
