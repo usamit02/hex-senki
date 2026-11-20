@@ -4,7 +4,7 @@ import type { Game, Side, Tile, Unit } from './types';
 
 const sideName = (s: Side): string => (s === 'p' ? 'あなた' : '敵');
 
-/** 駒が移動できるマスと、その移動コスト(森は2、水と他の駒のいるマスは通れない) */
+/** 駒が移動できるマスと、その移動コスト(森は2、水と敵の駒のいるマスは通れない。味方の駒は通り抜けられるが、止まれない) */
 export function reachable(g: Game, u: Unit): Map<string, number> {
   const def = g.defs[u.kind];
   const res = new Map<string, number>([[key(u.q, u.r), 0]]);
@@ -15,7 +15,9 @@ export function reachable(g: Game, u: Unit): Map<string, number> {
     if (c > (res.get(key(q, r)) ?? Infinity)) continue;
     for (const [dq, dr] of DIRS) {
       const t = tileAt(g, q + dq, r + dr);
-      if (!t || t.terrain === 'water' || unitAt(g, t.q, t.r)) continue;
+      if (!t || t.terrain === 'water') continue;
+      const other = unitAt(g, t.q, t.r);
+      if (other && other.side !== u.side) continue;
       const nc = c + (t.terrain === 'forest' ? 2 : 1);
       if (nc > def.move) continue;
       const k = key(t.q, t.r);
@@ -25,6 +27,13 @@ export function reachable(g: Game, u: Unit): Map<string, number> {
         open.push([t.q, t.r, nc]);
       }
     }
+  }
+  // 味方の駒がいるマスは通り抜けられるだけで、移動先にはできない
+  const start = key(u.q, u.r);
+  for (const k of [...res.keys()]) {
+    if (k === start) continue;
+    const t = g.tiles.get(k);
+    if (t && unitAt(g, t.q, t.r)) res.delete(k);
   }
   return res;
 }
