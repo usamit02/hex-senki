@@ -1,4 +1,0 @@
-{
-  "s": { "name": "兵", "hp": 10, "move": 3, "attack": 4, "minRange": 1, "range": 1, "cost": 10 },
-  "a": { "name": "弓", "hp": 10, "move": 2, "attack": 3, "minRange": 2, "range": 2, "cost": 10 }
-}
