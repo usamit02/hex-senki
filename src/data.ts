@@ -1,4 +1,5 @@
 import type { MapData, UnitDefs } from './types';
+import { validateUnitDefs } from './validate';
 
 const base = import.meta.env.BASE_URL;
 
@@ -8,5 +9,10 @@ async function fetchJson<T>(file: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-export const loadUnitDefs = (): Promise<UnitDefs> => fetchJson<UnitDefs>('units.json');
+export async function loadUnitDefs(): Promise<UnitDefs> {
+  const defs = await fetchJson<UnitDefs>('units.json');
+  validateUnitDefs(defs);
+  return defs;
+}
+
 export const loadMap = (): Promise<MapData> => fetchJson<MapData>('map.json');

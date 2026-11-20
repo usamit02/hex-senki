@@ -18,9 +18,9 @@
   ],
   "gold": { "p": 20, "e": 20 },
   "units": [
-    { "side": "p", "type": "s", "col": 1, "row": 2 },
-    { "side": "p", "type": "a", "col": 1, "row": 4 },
-    { "side": "e", "type": "s", "col": 7, "row": 2 },
-    { "side": "e", "type": "a", "col": 7, "row": 4 }
+    { "side": "p", "type": "infantry_swordsman", "col": 1, "row": 2 },
+    { "side": "p", "type": "ranged_archer", "col": 1, "row": 4 },
+    { "side": "e", "type": "infantry_swordsman", "col": 7, "row": 2 },
+    { "side": "e", "type": "ranged_archer", "col": 7, "row": 4 }
   ]
 }
