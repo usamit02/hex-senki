@@ -1,15 +1,15 @@
-import { fromOffset, key } from './hex';
-import type { Coord, Game, MapData, Side, Tile, TerrainKind, Unit, UnitDefs } from './types';
+import { equals, fromOffset, key } from './hex';
+import type { Cube, Game, MapData, Side, Tile, TerrainKind, Unit, UnitDefs } from './types';
 
 export const BASE_INCOME = 3;
 export const CITY_INCOME = 3;
 
 const TERRAIN_CHARS: Record<string, TerrainKind> = { '.': 'plain', F: 'forest', W: 'water' };
 
-export const tileAt = (g: Game, q: number, r: number): Tile | undefined => g.tiles.get(key(q, r));
+export const tileAt = (g: Game, c: Cube): Tile | undefined => g.tiles.get(key(c));
 
-export const unitAt = (g: Game, q: number, r: number): Unit | undefined =>
-  g.units.find((u) => u.hp > 0 && u.q === q && u.r === r);
+export const unitAt = (g: Game, c: Cube): Unit | undefined =>
+  g.units.find((u) => u.hp > 0 && equals(u, c));
 
 export const liveUnits = (g: Game, side: Side): Unit[] =>
   g.units.filter((u) => u.hp > 0 && u.side === side);
@@ -29,9 +29,9 @@ export const cheapestCost = (g: Game): number =>
   Math.min(...Object.values(g.defs).map((d) => d.cost));
 
 /** 雇った直後の駒は、そのターンは動けない */
-export function spawn(g: Game, side: Side, kind: string, at: Coord): void {
+export function spawn(g: Game, side: Side, kind: string, at: Cube): void {
   g.units.push({
-    q: at.q, r: at.r, side, kind, hp: g.defs[kind].hp, moved: true, acted: true, from: null,
+    x: at.x, y: at.y, z: at.z, side, kind, hp: g.defs[kind].hp, moved: true, acted: true, from: null,
   });
 }
 
@@ -45,14 +45,13 @@ export function createGame(defs: UnitDefs, map: MapData): Game {
   map.terrain.forEach((row, r) => {
     if (row.length !== width) throw new Error(`map.json: terrain の${r + 1}行目の長さが違います`);
     for (let i = 0; i < width; i++) {
-      const { q } = fromOffset(i, r);
-      tiles.set(key(q, r), { q, r, terrain: TERRAIN_CHARS[row[i]] ?? 'plain', city: null });
+      const c = fromOffset(i, r);
+      tiles.set(key(c), { x: c.x, y: c.y, z: c.z, terrain: TERRAIN_CHARS[row[i]] ?? 'plain', city: null });
     }
   });
 
   const tileAtOffset = (col: number, row: number): Tile => {
-    const { q, r } = fromOffset(col, row);
-    const t = tiles.get(key(q, r));
+    const t = tiles.get(key(fromOffset(col, row)));
     if (!t) throw new Error(`map.json: 座標が範囲外です (col=${col}, row=${row})`);
     return t;
   };
@@ -67,7 +66,7 @@ export function createGame(defs: UnitDefs, map: MapData): Game {
     const def = defs[u.type];
     if (!def) throw new Error(`units.json に "${u.type}" がありません`);
     const t = tileAtOffset(u.col, u.row);
-    return { q: t.q, r: t.r, side: u.side, kind: u.type, hp: def.hp, moved: false, acted: false, from: null };
+    return { x: t.x, y: t.y, z: t.z, side: u.side, kind: u.type, hp: def.hp, moved: false, acted: false, from: null };
   });
 
   const game: Game = {

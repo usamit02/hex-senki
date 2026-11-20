@@ -1,12 +1,12 @@
-import { distance } from './hex';
+import { distance, equals } from './hex';
 import { attack, inRange, moveUnit, reachable } from './rules';
 import { capitalOf, liveUnits, spawn, unitAt } from './state';
-import type { Coord, Game, Tile, Unit } from './types';
+import type { Cube, Game, Tile, Unit } from './types';
 
 /** 敵の首都が空いていて資金があれば、買える駒の中からランダムに1体雇う */
 export function enemyRecruit(g: Game): void {
   const c = capitalOf(g, 'e');
-  if (c.city?.owner !== 'e' || unitAt(g, c.q, c.r)) return;
+  if (c.city?.owner !== 'e' || unitAt(g, c)) return;
   const options = Object.keys(g.defs).filter((k) => g.defs[k].cost <= g.gold.e);
   if (options.length === 0) return;
   const kind = options[Math.floor(Math.random() * options.length)];
@@ -18,7 +18,7 @@ export function enemyRecruit(g: Game): void {
 export function enemyAct(g: Game, u: Unit): void {
   const def = g.defs[u.kind];
   const foes = liveUnits(g, 'p');
-  const target: Coord =
+  const target: Cube =
     [...foes].sort((a, b) => distance(u, a) - distance(u, b))[0] ?? capitalOf(g, 'p');
 
   let best: Tile | null = null;
@@ -37,7 +37,7 @@ export function enemyAct(g: Game, u: Unit): void {
       best = t;
     }
   }
-  if (best && (best.q !== u.q || best.r !== u.r)) moveUnit(g, u, best);
+  if (best && !equals(best, u)) moveUnit(g, u, best);
   if (g.over) return;
 
   const targets = foes.filter((f) => f.hp > 0 && inRange(g, u, f)).sort((a, b) => a.hp - b.hp);

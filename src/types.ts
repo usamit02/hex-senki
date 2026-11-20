@@ -3,9 +3,11 @@ export type Side = 'p' | 'e';
 
 export type TerrainKind = 'plain' | 'forest' | 'water';
 
-export interface Coord {
-  q: number;
-  r: number;
+/** キューブ座標。常に x + y + z = 0 が成り立つ(距離・隣接・回転の計算が簡単になる) */
+export interface Cube {
+  x: number;
+  y: number;
+  z: number;
 }
 
 /** units.json の1種類分の定義 */
@@ -35,19 +37,19 @@ export interface City {
   capital: Side | null;
 }
 
-export interface Tile extends Coord {
+export interface Tile extends Cube {
   terrain: TerrainKind;
   city: City | null;
 }
 
-export interface Unit extends Coord {
+export interface Unit extends Cube {
   side: Side;
   kind: string;
   hp: number;
   moved: boolean;
   acted: boolean;
   /** 移動の取り消し用。移動前の位置と、移動先の城や村の元の持ち主 */
-  from: { q: number; r: number; cityOwner: Side | null } | null;
+  from: { pos: Cube; cityOwner: Side | null } | null;
 }
 
 export interface Game {
@@ -63,6 +65,6 @@ export interface Game {
   busy: boolean;
   message: string;
   selected: Unit | null;
-  /** 選択中の駒が移動できるマス(キーは "q,r"、値は移動コスト) */
+  /** 選択中の駒が移動できるマス(キーは座標のキー文字列、値は移動コスト) */
   reach: Map<string, number> | null;
 }

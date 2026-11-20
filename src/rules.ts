@@ -1,39 +1,39 @@
-import { DIRS, distance, key } from './hex';
+import { distance, key, neighbors, pos, setPos } from './hex';
 import { capitalOf, cheapestCost, liveUnits, spawn, tileAt, unitAt } from './state';
-import type { Game, Side, Tile, Unit } from './types';
+import type { Cube, Game, Side, Tile, Unit } from './types';
 
 const sideName = (s: Side): string => (s === 'p' ? 'あなた' : '敵');
 
 /** 駒が移動できるマスと、その移動コスト(森は2、水と敵の駒のいるマスは通れない。味方の駒は通り抜けられるが、止まれない) */
 export function reachable(g: Game, u: Unit): Map<string, number> {
   const def = g.defs[u.kind];
-  const res = new Map<string, number>([[key(u.q, u.r), 0]]);
-  const open: Array<[number, number, number]> = [[u.q, u.r, 0]];
+  const res = new Map<string, number>([[key(u), 0]]);
+  const open: Array<{ at: Cube; cost: number }> = [{ at: pos(u), cost: 0 }];
   while (open.length) {
-    open.sort((a, b) => a[2] - b[2]);
-    const [q, r, c] = open.shift()!;
-    if (c > (res.get(key(q, r)) ?? Infinity)) continue;
-    for (const [dq, dr] of DIRS) {
-      const t = tileAt(g, q + dq, r + dr);
+    open.sort((a, b) => a.cost - b.cost);
+    const { at, cost } = open.shift()!;
+    if (cost > (res.get(key(at)) ?? Infinity)) continue;
+    for (const n of neighbors(at)) {
+      const t = tileAt(g, n);
       if (!t || t.terrain === 'water') continue;
-      const other = unitAt(g, t.q, t.r);
+      const other = unitAt(g, t);
       if (other && other.side !== u.side) continue;
-      const nc = c + (t.terrain === 'forest' ? 2 : 1);
+      const nc = cost + (t.terrain === 'forest' ? 2 : 1);
       if (nc > def.move) continue;
-      const k = key(t.q, t.r);
+      const k = key(t);
       const old = res.get(k);
       if (old === undefined || nc < old) {
         res.set(k, nc);
-        open.push([t.q, t.r, nc]);
+        open.push({ at: t, cost: nc });
       }
     }
   }
   // 味方の駒がいるマスは通り抜けられるだけで、移動先にはできない
-  const start = key(u.q, u.r);
+  const start = key(u);
   for (const k of [...res.keys()]) {
     if (k === start) continue;
     const t = g.tiles.get(k);
-    if (t && unitAt(g, t.q, t.r)) res.delete(k);
+    if (t && unitAt(g, t)) res.delete(k);
   }
   return res;
 }
@@ -45,9 +45,8 @@ export function inRange(g: Game, a: Unit, d: Unit): boolean {
 }
 
 export function moveUnit(g: Game, u: Unit, t: Tile): void {
-  u.from = { q: u.q, r: u.r, cityOwner: t.city ? t.city.owner : null };
-  u.q = t.q;
-  u.r = t.r;
+  u.from = { pos: pos(u), cityOwner: t.city ? t.city.owner : null };
+  setPos(u, t);
   u.moved = true;
   if (t.city && t.city.owner !== u.side) {
     t.city.owner = u.side;
@@ -59,10 +58,9 @@ export function moveUnit(g: Game, u: Unit, t: Tile): void {
 export function undoMove(g: Game, u: Unit): void {
   const f = u.from;
   if (!f) return;
-  const t = tileAt(g, u.q, u.r);
+  const t = tileAt(g, u);
   if (t?.city) t.city.owner = f.cityOwner;
-  u.q = f.q;
-  u.r = f.r;
+  setPos(u, f.pos);
   u.moved = false;
   u.from = null;
   g.message = '移動を取り消しました。';
@@ -75,8 +73,8 @@ export function confirmUnit(g: Game, u: Unit): void {
 }
 
 export function attack(g: Game, a: Unit, d: Unit): void {
-  const ta = tileAt(g, a.q, a.r);
-  const td = tileAt(g, d.q, d.r);
+  const ta = tileAt(g, a);
+  const td = tileAt(g, d);
   const A = g.defs[a.kind];
   const D = g.defs[d.kind];
   const dmg = Math.max(1, A.attack + Math.floor(Math.random() * 3) - (td?.terrain === 'forest' ? 1 : 0));
@@ -115,7 +113,7 @@ export function canRecruit(g: Game, kind: string): boolean {
   const def = g.defs[kind];
   if (!def || g.busy || g.over) return false;
   const c = capitalOf(g, 'p');
-  return c.city?.owner === 'p' && !unitAt(g, c.q, c.r) && g.gold.p >= def.cost;
+  return c.city?.owner === 'p' && !unitAt(g, c) && g.gold.p >= def.cost;
 }
 
 export function recruit(g: Game, kind: string): boolean {
