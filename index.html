@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ヘックス戦記</title>
+<style>
+:root{--bg:#e8edf2;--fg:#1c2530;--card:#fff;--line:#b7c3d0;--pl:#1f6fb5;--en:#c2392f;--ac:#1b7f79;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141a21;--fg:#e6ecf2;--card:#1e2731;--line:#34414f;--pl:#5aa7e8;--en:#ef6b60;--ac:#4cc3bb;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#141a21;--fg:#e6ecf2;--card:#1e2731;--line:#34414f;--pl:#5aa7e8;--en:#ef6b60;--ac:#4cc3bb;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:"Hiragino Sans","Yu Gothic",Meiryo,sans-serif;line-height:1.6}
+main{max-width:760px;margin:0 auto;padding:12px}
+h1{font-size:1.25rem;margin:4px 0 8px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
+.stat{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 10px;font-size:.9rem}
+button{font:inherit;font-size:.9rem;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
+button:hover:not(:disabled){border-color:var(--ac)}
+button:focus-visible,canvas:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+button.go{background:var(--ac);color:#fff;border-color:var(--ac)}
+button:disabled{opacity:.45;cursor:default}
+canvas{width:100%;display:block;background:var(--card);border:1px solid var(--line);border-radius:8px;touch-action:manipulation}
+#msg{min-height:3.2em;margin:8px 0;font-size:.95rem}
+details{font-size:.85rem;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:6px 10px}
+</style></head><body><main>
+<h1>ヘックス戦記</h1>
+<div class="bar">
+ <span class="stat" id="tn"></span><span class="stat" id="gd"></span>
+ <button id="bs">兵を雇う(10)</button><button id="ba">弓を雇う(10)</button>
+ <button id="be" class="go">ターン終了</button><button id="bn">新規ゲーム</button>
+</div>
+<canvas id="c" tabindex="0" aria-label="ゲーム盤"></canvas>
+<div id="msg"></div>
+<details><summary>遊び方</summary>
+<p>青があなたの軍です。自分の駒をタップして選び、光ったマスへ移動、赤い枠の敵をタップして攻撃します。</p>
+<p>城と村は踏むと自分のものになり、毎ターンの資金が増えます。資金で自分の城に兵(移動3・隣接する敵を攻撃)か弓(移動2・ちょうど2マス先だけ攻撃、隣接は不可)を、どちらも10で雇えます。森は移動コスト2で防御+1、水は通れません。</p>
+<p>移動した後に、その駒をもう一度タップすると移動を取り消せます(攻撃した後は取り消せません)。駒をダブルクリック(ダブルタップ)すると、その駒の行動を確定して終了します(未移動なら待機)。何もないマスをタップすると選択を解除できます。</p>
+<p>敵の城を奪うか、敵の駒を全滅させると勝ちです。</p></details>
+</main>
+<script>
+let W=9,H=7,UT={},MAP=null;const S=Math.sqrt(3),cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const DIR=[[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
+const key=(q,r)=>q+','+r, $=id=>document.getElementById(id);
+let T,U,gold,turn,sel,reach,over,busy,msg,size,dpr,lastU=null,lastT=0,utimer=null;
+const dist=(a,b)=>(Math.abs(a.q-b.q)+Math.abs(a.q+a.r-b.q-b.r)+Math.abs(a.r-b.r))/2;
+const at=(q,r)=>U.find(u=>u.hp>0&&u.q==q&&u.r==r);
+const til=(i,r)=>T.get(key(i-(r>>1),r));
+const cities=s=>[...T.values()].filter(t=>t.c&&t.c.o==s);
+const cap=s=>[...T.values()].find(t=>t.c&&t.c.cap==s);
+function init(){
+ H=MAP.terrain.length;W=MAP.terrain[0].length;
+ T=new Map();U=[];gold={p:MAP.gold.p,e:MAP.gold.e};turn=1;sel=null;reach=null;over=false;busy=false;
+ for(let r=0;r<H;r++)for(let i=0;i<W;i++){const q=i-(r>>1),ch=MAP.terrain[r][i];
+  T.set(key(q,r),{q,r,t:ch=='W'?2:ch=='F'?1:0,c:null});}
+ for(const c of MAP.cities){const t=til(c.col,c.row);t.t=0;t.c={o:c.owner,cap:c.capital?c.owner:null};}
+ for(const u of MAP.units){const t=til(u.col,u.row);U.push({s:u.side,k:u.type,hp:UT[u.type].hp,q:t.q,r:t.r,m:false,a:false});}
+ $('bs').textContent='兵を雇う('+UT.s.cost+')';$('ba').textContent='弓を雇う('+UT.a.cost+')';
+ msg='あなたのターンです。自分の駒をタップしてください。';resize();
+}
+function resize(){if(!MAP)return;
+ dpr=window.devicePixelRatio||1;const cw=cv.parentElement.clientWidth-24;
+ size=cw/(S*(W+.5));const ch=size*(1.5*(H-1)+2);
+ cv.width=cw*dpr;cv.height=ch*dpr;cv.style.height=ch+'px';draw();
+}
+const px=(q,r)=>({x:size*S*(q+r/2+.5),y:size*(1.5*r+1)});
+function pick(x,y){
+ const X=x-size*S/2,Y=y-size,qf=(S/3*X-Y/3)/size,rf=(2/3*Y)/size;
+ let q=Math.round(qf),r=Math.round(rf),s=Math.round(-qf-rf);
+ const dq=Math.abs(q-qf),dr=Math.abs(r-rf),ds=Math.abs(s+qf+rf);
+ if(dq>dr&&dq>ds)q=-r-s;else if(dr>ds)r=-q-s;
+ return {q,r};
+}
+function hexPath(x,y,k){ctx.beginPath();for(let i=0;i<6;i++){const a=Math.PI/180*(60*i-30);ctx.lineTo(x+size*k*Math.cos(a),y+size*k*Math.sin(a));}ctx.closePath();}
+function inRange(a,d){const x=dist(a,d);return x>=UT[a.k].mn&&x<=UT[a.k].rg;}
+function draw(){if(!T)return;
+ ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,cv.width,cv.height);
+ const cs=getComputedStyle(document.documentElement),pl=cs.getPropertyValue('--pl').trim(),en=cs.getPropertyValue('--en').trim(),fg=cs.getPropertyValue('--fg').trim();
+ ctx.textAlign='center';ctx.textBaseline='middle';
+ for(const t of T.values()){
+  const {x,y}=px(t.q,t.r);hexPath(x,y,.97);
+  ctx.fillStyle=t.t==2?'#7fb3d5':t.t==1?'#79a36a':'#c5d9a8';ctx.fill();
+  ctx.strokeStyle='rgba(40,60,50,.45)';ctx.lineWidth=1;ctx.stroke();
+  if(t.t==1){ctx.fillStyle='rgba(30,70,30,.7)';ctx.font=size*.4+'px sans-serif';ctx.fillText('林',x,y+size*.45);}
+  if(t.c){ctx.lineWidth=3;ctx.strokeStyle=t.c.o=='p'?pl:t.c.o=='e'?en:'#8a8a8a';hexPath(x,y,.8);ctx.stroke();
+   ctx.fillStyle=ctx.strokeStyle;ctx.font='bold '+size*.38+'px sans-serif';ctx.fillText(t.c.cap?'城':'村',x,y-size*.55);}
+  if(reach&&reach.has(key(t.q,t.r))&&!at(t.q,t.r)){hexPath(x,y,.9);ctx.fillStyle='rgba(255,230,80,.55)';ctx.fill();}
+ }
+ if(sel)for(const d of U)if(d.hp>0&&d.s=='e'&&!sel.a&&inRange(sel,d)){const {x,y}=px(d.q,d.r);hexPath(x,y,.95);ctx.lineWidth=3;ctx.strokeStyle='#ff2d2d';ctx.stroke();}
+ for(const u of U){if(u.hp<=0)continue;const {x,y}=px(u.q,u.r),col=u.s=='p'?pl:en;
+  ctx.globalAlpha=u.s=='p'&&u.m&&u.a?.45:1;
+  ctx.beginPath();ctx.arc(x,y,size*.5,0,7);ctx.fillStyle=col;ctx.fill();
+  if(sel===u){ctx.lineWidth=3;ctx.strokeStyle='#fff';ctx.stroke();}
+  ctx.fillStyle='#fff';ctx.font='bold '+size*.5+'px sans-serif';ctx.fillText(UT[u.k].n,x,y-1);
+  ctx.font='bold '+size*.3+'px sans-serif';ctx.fillStyle=fg;ctx.fillText(u.hp,x+size*.55,y+size*.5);ctx.globalAlpha=1;}
+ $('tn').textContent='ターン '+turn;$('gd').textContent='資金 '+gold.p+'(+'+inc('p')+')';
+ $('msg').textContent=msg;
+ const c=cap('p'),free=!at(c.q,c.r)&&c.c.o=='p'&&!busy&&!over;
+ $('bs').disabled=!(free&&gold.p>=UT.s.cost);$('ba').disabled=!(free&&gold.p>=UT.a.cost);$('be').disabled=busy||over;
+}
+const inc=s=>3+3*cities(s).length;
+function reachable(u){
+ const res=new Map([[key(u.q,u.r),0]]),open=[[u.q,u.r,0]];
+ while(open.length){open.sort((a,b)=>a[2]-b[2]);const [q,r,c]=open.shift();if(c>res.get(key(q,r)))continue;
+  for(const [dq,dr] of DIR){const t=T.get(key(q+dq,r+dr));if(!t||t.t==2||at(t.q,t.r))continue;
+   const nc=c+(t.t==1?2:1);if(nc>UT[u.k].mv)continue;const k=key(t.q,t.r);
+   if(res.get(k)===undefined||nc<res.get(k)){res.set(k,nc);open.push([t.q,t.r,nc]);}}}
+ return res;
+}
+function moveTo(u,t){
+ u.from={q:u.q,r:u.r,o:t.c?t.c.o:null};u.q=t.q;u.r=t.r;u.m=true;
+ if(t.c&&t.c.o!=u.s){t.c.o=u.s;msg=(u.s=='p'?'あなた':'敵')+'が'+(t.c.cap?'城':'村')+'を占領しました。';}
+ check();
+}
+function attack(a,d){
+ const ta=T.get(key(a.q,a.r)),td=T.get(key(d.q,d.r));
+ const dm=Math.max(1,UT[a.k].at+(Math.random()*3|0)-(td.t==1?1:0));d.hp-=dm;
+ let m=(a.s=='p'?'あなたの':'敵の')+UT[a.k].n+'が'+dm+'ダメージを与えた。';
+ if(d.hp<=0)m+=UT[d.k].n+'を倒した!';
+ else if(dist(a,d)>=UT[d.k].mn&&dist(a,d)<=UT[d.k].rg){const cm=Math.max(1,UT[d.k].at-2-(ta.t==1?1:0));a.hp-=cm;m+=' 反撃で'+cm+'ダメージ。';if(a.hp<=0)m+=UT[a.k].n+'が倒れた。';}
+ a.m=a.a=true;a.from=null;msg=m;check();
+}
+function check(){
+ if(over)return;
+ const alive=s=>U.some(u=>u.hp>0&&u.s==s);
+ if(cap('p').c.o=='e'||(!alive('p')&&gold.p<Math.min(UT.s.cost,UT.a.cost))){over=true;msg='敗北…。「新規ゲーム」で再挑戦できます。';}
+ else if(cap('e').c.o=='p'||(!alive('e')&&gold.e<Math.min(UT.s.cost,UT.a.cost))){over=true;msg='勝利!「新規ゲーム」でもう一度遊べます。';}
+}
+function recruit(k){
+ const c=cap('p');if(at(c.q,c.r)||gold.p<UT[k].cost)return;
+ gold.p-=UT[k].cost;U.push({s:'p',k,hp:UT[k].hp,q:c.q,r:c.r,m:true,a:true});msg=UT[k].n+'を雇いました。';draw();
+}
+cv.addEventListener('pointerdown',e=>{
+ if(over||busy)return;const rc=cv.getBoundingClientRect(),h=pick(e.clientX-rc.left,e.clientY-rc.top),t=T.get(key(h.q,h.r));
+ if(!t){sel=null;reach=null;draw();return;}
+ const u=at(t.q,t.r);
+ const now=Date.now(),dbl=!!u&&u===lastU&&now-lastT<300;lastU=u||null;lastT=now;
+ if(sel){
+  if(u===sel&&!sel.a){
+   if(dbl){clearTimeout(utimer);utimer=null;confirmU(sel);return;}
+   if(sel.m&&sel.from){clearTimeout(utimer);utimer=setTimeout(()=>{if(sel&&sel.m&&!sel.a&&sel.from)undo(sel);},300);return;}
+  }
+  if(u&&u.s=='e'&&!sel.a&&inRange(sel,u)){attack(sel,u);sel=null;reach=null;draw();return;}
+  if(!u&&reach&&reach.has(key(t.q,t.r))&&!sel.m){moveTo(sel,t);reach=null;draw();return;}
+ }
+ if(u&&u.s=='p'&&!(u.m&&u.a)){sel=u;reach=u.m?null:reachable(u);msg=UT[u.k].n+'を選択。移動先か攻撃対象をタップ。';}
+ else{sel=null;reach=null;}
+ draw();
+});
+function confirmU(u){u.m=u.a=true;u.from=null;sel=null;reach=null;msg='この駒の行動を確定しました。';draw();}
+function undo(u){const f=u.from,t=T.get(key(u.q,u.r));if(t.c)t.c.o=f.o;u.q=f.q;u.r=f.r;u.m=false;u.from=null;reach=reachable(u);msg='移動を取り消しました。';draw();}
+function endTurn(){
+ if(over||busy)return;sel=null;reach=null;busy=true;
+ if(turn>1)gold.e+=inc('e');U.forEach(u=>{if(u.s=='e'){u.m=u.a=false;}});
+ const mine=U.filter(u=>u.s=='e'&&u.hp>0);const c=cap('e');
+ if(!at(c.q,c.r)&&c.c.o=='e'){const k=Math.random()<.4?'a':'s';
+  if(gold.e>=UT[k].cost){gold.e-=UT[k].cost;U.push({s:'e',k,hp:UT[k].hp,q:c.q,r:c.r,m:true,a:true});}}
+ let i=0;msg='敵のターン…';draw();
+ const step=()=>{
+  if(over)return draw();
+  if(i>=mine.length){turn++;gold.p+=inc('p');U.forEach(u=>{if(u.s=='p'){u.m=u.a=false;}});busy=false;if(!over)msg='あなたのターンです。';return draw();}
+  const u=mine[i++];if(u.hp>0)aiAct(u);draw();setTimeout(step,450);
+ };
+ setTimeout(step,300);
+}
+function aiAct(u){
+ const foes=U.filter(x=>x.s=='p'&&x.hp>0);
+ let tg=foes.sort((a,b)=>dist(u,a)-dist(u,b))[0]||cap('p');
+ const rg=UT[u.k].rg;let best=null,bs=-1e9;
+ for(const [k] of reachable(u)){
+  const [q,r]=k.split(',').map(Number),t=T.get(k);
+  let s=-dist({q,r},tg)*2+(t.t==1?1:0)+(t.c&&t.c.o!='e'?4:0);
+  if(foes.some(f=>{const d=dist({q,r},f);return d>=UT[u.k].mn&&d<=rg;}))s+=5;
+  if(u.k=='a'&&foes.some(f=>dist({q,r},f)==1))s-=4;
+  if(s>bs){bs=s;best=t;}
+ }
+ if(best&&(best.q!=u.q||best.r!=u.r))moveTo(u,best);
+ if(over)return;
+ const tgts=foes.filter(f=>f.hp>0&&inRange(u,f)).sort((a,b)=>a.hp-b.hp);
+ if(tgts.length)attack(u,tgts[0]);
+}
+$('bs').onclick=()=>recruit('s');$('ba').onclick=()=>recruit('a');
+$('be').onclick=endTurn;$('bn').onclick=init;
+addEventListener('resize',resize);
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',draw);
+Promise.all(['units.json','map.json'].map(f=>fetch(f).then(r=>{if(!r.ok)throw new Error(f);return r.json();}))).then(([u,m])=>{
+ for(const k in u)UT[k]={n:u[k].name,hp:u[k].hp,mv:u[k].move,at:u[k].attack,mn:u[k].minRange,rg:u[k].range,cost:u[k].cost};
+ MAP=m;init();
+}).catch(e=>{$('msg').textContent='JSONの読み込みに失敗しました('+e.message+')。ローカルサーバー経由で開いてください(例: python3 -m http.server)。';});
+</script></body></html>
