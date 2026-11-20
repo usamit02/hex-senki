@@ -18,7 +18,7 @@ export function bindBoardInput({ canvas, renderer, getGame, refresh }: InputDeps
     const g = getGame();
     if (g.over || g.busy) return;
     const h = renderer.pick(e.clientX, e.clientY);
-    const t = tileAt(g, h.q, h.r);
+    const t = tileAt(g, h);
     if (!t) {
       g.selected = null;
       g.reach = null;
@@ -26,7 +26,7 @@ export function bindBoardInput({ canvas, renderer, getGame, refresh }: InputDeps
       return;
     }
 
-    const u = unitAt(g, t.q, t.r);
+    const u = unitAt(g, t);
     const sel = g.selected;
     if (sel) {
       // 選択中の駒をもう一度クリックすると、その駒の行動を確定する(移動していなければ待機)
@@ -44,7 +44,7 @@ export function bindBoardInput({ canvas, renderer, getGame, refresh }: InputDeps
         refresh();
         return;
       }
-      if (!u && g.reach?.has(key(t.q, t.r)) && !sel.moved) {
+      if (!u && g.reach?.has(key(t)) && !sel.moved) {
         moveUnit(g, sel, t);
         g.reach = null;
         refresh();

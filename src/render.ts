@@ -1,13 +1,13 @@
 import { SQRT3, fromPixel, key, toPixel } from './hex';
 import { inRange } from './rules';
 import { unitAt } from './state';
-import type { Coord, Game } from './types';
+import type { Cube, Game } from './types';
 
 export interface Renderer {
   resize(g: Game): void;
   draw(g: Game): void;
   /** 画面上の座標から、そこにあるマスを求める */
-  pick(clientX: number, clientY: number): Coord;
+  pick(clientX: number, clientY: number): Cube;
 }
 
 const TERRAIN_COLORS = { plain: '#c5d9a8', forest: '#79a36a', water: '#7fb3d5' } as const;
@@ -61,7 +61,7 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
         ctx!.font = `bold ${size * 0.38}px sans-serif`;
         ctx!.fillText(t.city.capital ? '城' : '村', x, y - size * 0.55);
       }
-      if (g.reach?.has(key(t.q, t.r)) && !unitAt(g, t.q, t.r)) {
+      if (g.reach?.has(key(t)) && !unitAt(g, t)) {
         hexPath(x, y, 0.9);
         ctx!.fillStyle = 'rgba(255,230,80,.55)';
         ctx!.fill();
@@ -115,7 +115,7 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
     draw(g);
   }
 
-  function pick(clientX: number, clientY: number): Coord {
+  function pick(clientX: number, clientY: number): Cube {
     const rc = canvas.getBoundingClientRect();
     return fromPixel(clientX - rc.left, clientY - rc.top, size);
   }
