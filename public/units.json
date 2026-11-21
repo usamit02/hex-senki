@@ -1,4 +1,5 @@
 {
   "infantry_swordsman": { "name": "兵", "hp": 10, "move": 3, "attack": 4, "minRange": 1, "range": 1, "cost": 10 },
-  "ranged_archer": { "name": "弓", "hp": 10, "move": 2, "attack": 3, "minRange": 2, "range": 2, "cost": 10 }
+  "ranged_archer": { "name": "弓", "hp": 10, "move": 2, "attack": 3, "minRange": 2, "range": 2, "cost": 10 },
+  "infantry_sailor": { "name": "水兵", "hp": 12, "move": 3, "attack": 5, "minRange": 1, "range": 1, "cost": 12 }
 }
