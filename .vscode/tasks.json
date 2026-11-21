@@ -10,10 +10,22 @@
 				"dev",
 				"--",
 				"--host",
-				"127.0.0.1"
+				"127.0.0.1",
+				"--strictPort"
 			],
 			"isBackground": true,
-			"problemMatcher": []
+			"problemMatcher": {
+				"owner": "custom",
+				"pattern": {
+					"regexp": "^$",
+					"message": 0
+				},
+				"background": {
+					"activeOnStart": true,
+					"beginsPattern": "^> .* dev$",
+					"endsPattern": "http://127\\.0\\.0\\.1:5173/"
+				}
+			}
 		}
 	]
 }
