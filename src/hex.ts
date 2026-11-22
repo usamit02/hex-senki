@@ -2,7 +2,7 @@ import type { Cube } from './types';
 
 /**
  * キューブ座標 (x, y, z) の計算。常に x + y + z = 0。
- * 画面の見た目は「尖った角が上のヘックス」で、奇数行が半マス右にずれる配置。
+ * 画面の見た目は「平らな辺が上のヘックス(フラットトップ)」で、奇数列が半マス下にずれる配置。
  */
 
 export const SQRT3 = Math.sqrt(3);
@@ -38,10 +38,10 @@ export function setPos(target: Cube, to: Cube): void {
   target.z = to.z;
 }
 
-/** JSON 上の (列, 行) をキューブ座標に変換する(奇数行が半マス右にずれる配置) */
+/** JSON 上の (列, 行) をキューブ座標に変換する(奇数列が半マス下にずれる配置) */
 export function fromOffset(col: number, row: number): Cube {
-  const x = col - (row >> 1);
-  return { x, y: -x - row, z: row };
+  const z = row - (col >> 1);
+  return { x: col, y: -col - z, z };
 }
 
 /** 小数のキューブ座標を、最も近いマスに丸める */
@@ -60,15 +60,21 @@ export function cubeRound(fx: number, fy: number, fz: number): Cube {
 
 /** キューブ座標から、描画用のピクセル座標(マス中心)を求める */
 export const toPixel = (c: Cube, size: number): { x: number; y: number } => ({
-  x: size * SQRT3 * (c.x + c.z / 2 + 0.5),
-  y: size * (1.5 * c.z + 1),
+  x: size * (1.5 * c.x + 1),
+  y: size * SQRT3 * (c.z + c.x / 2 + 0.5),
+});
+
+/** 盤面全体を描くのに必要な幅と高さ */
+export const boardSize = (cols: number, rows: number, size: number): { w: number; h: number } => ({
+  w: size * (1.5 * (cols - 1) + 2),
+  h: size * SQRT3 * (rows + 0.5),
 });
 
 /** ピクセル座標から、そこにあるマスのキューブ座標を求める */
 export function fromPixel(px: number, py: number, size: number): Cube {
-  const X = px - (size * SQRT3) / 2;
-  const Y = py - size;
-  const fx = ((SQRT3 / 3) * X - Y / 3) / size;
-  const fz = ((2 / 3) * Y) / size;
+  const X = px - size;
+  const Y = py - (size * SQRT3) / 2;
+  const fx = ((2 / 3) * X) / size;
+  const fz = ((-1 / 3) * X + (SQRT3 / 3) * Y) / size;
   return cubeRound(fx, -fx - fz, fz);
 }

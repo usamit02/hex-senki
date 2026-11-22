@@ -1,7 +1,7 @@
 /** 陣営: p = プレイヤー, e = 敵(CPU) */
 export type Side = 'p' | 'e';
 
-export type TerrainKind = 'plain' | 'forest' | 'water';
+export type TerrainKind = 'plain' | 'forest' | 'mountain' | 'water';
 
 /** キューブ座標。常に x + y + z = 0 が成り立つ(距離・隣接・回転の計算が簡単になる) */
 export interface Cube {
@@ -22,10 +22,23 @@ export interface UnitDef {
 }
 export type UnitDefs = Record<string, UnitDef>;
 
-/** map.json の中身 */
+/** マップJSONの1マス分 */
+export interface HexData {
+  id: number;
+  col: number;
+  row: number;
+  /** 実際の地図上の位置(メートル) */
+  center_x: number;
+  center_y: number;
+  terrain: string;
+  road_score: number;
+  river_score: number;
+}
+
+/** マップJSON(map1.json)の中身 */
 export interface MapData {
   name?: string;
-  terrain: string[];
+  hexes: HexData[];
   cities: Array<{ col: number; row: number; owner: Side | null; capital?: boolean }>;
   gold: Record<Side, number>;
   units: Array<{ side: Side; type: string; col: number; row: number }>;
@@ -40,6 +53,11 @@ export interface City {
 export interface Tile extends Cube {
   terrain: TerrainKind;
   city: City | null;
+  /** 以下はマップJSONの値。今後のCPU戦略で使えるよう保持する */
+  id: number;
+  geo: { x: number; y: number };
+  roadScore: number;
+  riverScore: number;
 }
 
 export interface Unit extends Cube {

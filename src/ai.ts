@@ -1,6 +1,7 @@
 import { distance, equals } from './hex';
 import { attack, inRange, moveUnit, reachable } from './rules';
 import { capitalOf, liveUnits, spawn, unitAt } from './state';
+import { TERRAINS } from './terrain';
 import type { Cube, Game, Tile, Unit } from './types';
 
 /** 敵の首都が空いていて資金があれば、買える駒の中からランダムに1体雇う */
@@ -27,7 +28,7 @@ export function enemyAct(g: Game, u: Unit): void {
     const t = g.tiles.get(k);
     if (!t) continue;
     let score = -distance(t, target) * 2;
-    if (t.terrain === 'forest') score += 1;
+    score += TERRAINS[t.terrain].defense;
     if (t.city && t.city.owner !== 'e') score += 4;
     if (foes.some((f) => { const d = distance(t, f); return d >= def.minRange && d <= def.range; })) score += 5;
     // 隣接されると撃てない駒(最小射程が2以上)は、隣接を避ける

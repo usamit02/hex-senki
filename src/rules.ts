@@ -1,10 +1,11 @@
 import { distance, key, neighbors, pos, setPos } from './hex';
 import { capitalOf, cheapestCost, liveUnits, spawn, tileAt, unitAt } from './state';
+import { TERRAINS } from './terrain';
 import type { Cube, Game, Side, Tile, Unit } from './types';
 
 const sideName = (s: Side): string => (s === 'p' ? 'あなた' : '敵');
 
-/** 駒が移動できるマスと、その移動コスト(森は2、水と敵の駒のいるマスは通れない。味方の駒は通り抜けられるが、止まれない) */
+/** 駒が移動できるマスと、その移動コスト(地形ごとの移動コストを足していく。水と敵の駒のいるマスは通れない。味方の駒は通り抜けられるが、止まれない) */
 export function reachable(g: Game, u: Unit): Map<string, number> {
   const def = g.defs[u.kind];
   const res = new Map<string, number>([[key(u), 0]]);
@@ -15,10 +16,10 @@ export function reachable(g: Game, u: Unit): Map<string, number> {
     if (cost > (res.get(key(at)) ?? Infinity)) continue;
     for (const n of neighbors(at)) {
       const t = tileAt(g, n);
-      if (!t || t.terrain === 'water') continue;
+      if (!t) continue;
       const other = unitAt(g, t);
       if (other && other.side !== u.side) continue;
-      const nc = cost + (t.terrain === 'forest' ? 2 : 1);
+      const nc = cost + TERRAINS[t.terrain].moveCost;
       if (nc > def.move) continue;
       const k = key(t);
       const old = res.get(k);
@@ -77,7 +78,7 @@ export function attack(g: Game, a: Unit, d: Unit): void {
   const td = tileAt(g, d);
   const A = g.defs[a.kind];
   const D = g.defs[d.kind];
-  const dmg = Math.max(1, A.attack + Math.floor(Math.random() * 3) - (td?.terrain === 'forest' ? 1 : 0));
+  const dmg = Math.max(1, A.attack + Math.floor(Math.random() * 3) - (td ? TERRAINS[td.terrain].defense : 0));
   d.hp -= dmg;
   let m = `${a.side === 'p' ? 'あなたの' : '敵の'}${A.name}が${dmg}ダメージを与えた。`;
   if (d.hp <= 0) {
@@ -85,7 +86,7 @@ export function attack(g: Game, a: Unit, d: Unit): void {
   } else {
     const x = distance(a, d);
     if (x >= D.minRange && x <= D.range) {
-      const counter = Math.max(1, D.attack - 2 - (ta?.terrain === 'forest' ? 1 : 0));
+      const counter = Math.max(1, D.attack - 2 - (ta ? TERRAINS[ta.terrain].defense : 0));
       a.hp -= counter;
       m += ` 反撃で${counter}ダメージ。`;
       if (a.hp <= 0) m += `${A.name}が倒れた。`;

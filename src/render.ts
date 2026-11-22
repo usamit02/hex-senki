@@ -1,6 +1,7 @@
-import { SQRT3, fromPixel, key, toPixel } from './hex';
+import { boardSize, fromPixel, key, toPixel } from './hex';
 import { inRange } from './rules';
 import { unitAt } from './state';
+import { TERRAINS } from './terrain';
 import type { Cube, Game } from './types';
 
 export interface Renderer {
@@ -10,7 +11,6 @@ export interface Renderer {
   pick(clientX: number, clientY: number): Cube;
 }
 
-const TERRAIN_COLORS = { plain: '#c5d9a8', forest: '#79a36a', water: '#7fb3d5' } as const;
 const NEUTRAL_COLOR = '#8a8a8a';
 
 export function createRenderer(canvas: HTMLCanvasElement): Renderer {
@@ -22,7 +22,7 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
   function hexPath(x: number, y: number, k: number): void {
     ctx!.beginPath();
     for (let i = 0; i < 6; i++) {
-      const a = (Math.PI / 180) * (60 * i - 30);
+      const a = (Math.PI / 180) * (60 * i);
       ctx!.lineTo(x + size * k * Math.cos(a), y + size * k * Math.sin(a));
     }
     ctx!.closePath();
@@ -41,15 +41,16 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
     for (const t of g.tiles.values()) {
       const { x, y } = toPixel(t, size);
       hexPath(x, y, 0.97);
-      ctx!.fillStyle = TERRAIN_COLORS[t.terrain];
+      ctx!.fillStyle = TERRAINS[t.terrain].color;
       ctx!.fill();
       ctx!.strokeStyle = 'rgba(40,60,50,.45)';
       ctx!.lineWidth = 1;
       ctx!.stroke();
-      if (t.terrain === 'forest') {
-        ctx!.fillStyle = 'rgba(30,70,30,.7)';
+      const glyph = TERRAINS[t.terrain].glyph;
+      if (glyph) {
+        ctx!.fillStyle = 'rgba(30,50,30,.7)';
         ctx!.font = `${size * 0.4}px sans-serif`;
-        ctx!.fillText('林', x, y + size * 0.45);
+        ctx!.fillText(glyph, x, y + size * 0.5);
       }
       if (t.city) {
         const color = t.city.owner === 'p' ? playerColor : t.city.owner === 'e' ? enemyColor : NEUTRAL_COLOR;
@@ -107,8 +108,8 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
   function resize(g: Game): void {
     dpr = window.devicePixelRatio || 1;
     const cw = (canvas.parentElement?.clientWidth ?? 600) - 24;
-    size = cw / (SQRT3 * (g.width + 0.5));
-    const ch = size * (1.5 * (g.height - 1) + 2);
+    size = cw / boardSize(g.width, g.height, 1).w;
+    const ch = boardSize(g.width, g.height, size).h;
     canvas.width = cw * dpr;
     canvas.height = ch * dpr;
     canvas.style.height = `${ch}px`;

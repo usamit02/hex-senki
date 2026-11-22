@@ -3,6 +3,9 @@ import { validateUnitDefs } from './validate';
 
 const base = import.meta.env.BASE_URL;
 
+/** 読み込むマップのファイル名(public/ に置く) */
+export const MAP_FILE = 'map1.json';
+
 async function fetchJson<T>(file: string): Promise<T> {
   const res = await fetch(`${base}${file}`);
   if (!res.ok) throw new Error(`${file} を読み込めません (${res.status})`);
@@ -15,4 +18,4 @@ export async function loadUnitDefs(): Promise<UnitDefs> {
   return defs;
 }
 
-export const loadMap = (): Promise<MapData> => fetchJson<MapData>('map.json');
+export const loadMap = (): Promise<MapData> => fetchJson<MapData>(MAP_FILE);
