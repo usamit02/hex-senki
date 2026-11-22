@@ -47,7 +47,7 @@ export function createGame(defs: UnitDefs, map: MapData): Game {
     }
     if (!isTerrainKind(h.terrain)) {
       throw new Error(
-        `マップJSON: hex id=${h.id} (col=${h.col}, row=${h.row}) の地形 "${h.terrain}" は未対応です(plain / forest / mountain / water)`,
+        `マップJSON: hex id=${h.id} (col=${h.col}, row=${h.row}) の地形 "${h.terrain}" は未対応です(plain / forest / mountain / water / marsh)`,
       );
     }
     const c = fromOffset(h.col, h.row);

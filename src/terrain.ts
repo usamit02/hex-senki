@@ -19,6 +19,7 @@ export const TERRAINS: Record<TerrainKind, TerrainDef> = {
   forest: { label: '森', moveCost: 2, defense: 1, color: '#79a36a', glyph: '林' },
   mountain: { label: '山', moveCost: 3, defense: 2, color: '#a79d8e', glyph: '山' },
   water: { label: '水', moveCost: Infinity, defense: 0, color: '#7fb3d5', glyph: '' },
+  marsh: { label: '沼', moveCost: 3, defense: 0, color: '#8fb8a8', glyph: '沼' },
 };
 
 export const isTerrainKind = (s: string): s is TerrainKind => Object.hasOwn(TERRAINS, s);

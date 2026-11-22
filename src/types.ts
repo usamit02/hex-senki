@@ -1,7 +1,7 @@
 /** 陣営: p = プレイヤー, e = 敵(CPU) */
 export type Side = 'p' | 'e';
 
-export type TerrainKind = 'plain' | 'forest' | 'mountain' | 'water';
+export type TerrainKind = 'plain' | 'forest' | 'mountain' | 'water' | 'marsh';
 
 /** キューブ座標。常に x + y + z = 0 が成り立つ(距離・隣接・回転の計算が簡単になる) */
 export interface Cube {
