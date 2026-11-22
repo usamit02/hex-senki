@@ -4,7 +4,7 @@ import { validateUnitDefs } from './validate';
 const base = import.meta.env.BASE_URL;
 
 /** 読み込むマップのファイル名(public/ に置く) */
-export const MAP_FILE = 'map1.json';
+export const MAP_FILE = 'map.json';
 
 async function fetchJson<T>(file: string): Promise<T> {
   const res = await fetch(`${base}${file}`);
