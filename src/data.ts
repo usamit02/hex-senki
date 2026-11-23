@@ -1,10 +1,11 @@
-import type { MapData, UnitDefs } from './types';
+import type { HexMapData, MapConfig, MapData, UnitDefs } from './types';
 import { validateUnitDefs } from './validate';
 
 const base = import.meta.env.BASE_URL;
 
 /** 読み込むマップのファイル名(public/ に置く) */
 export const MAP_FILE = 'map.json';
+export const HEX_FILE = 'hex.json';
 
 async function fetchJson<T>(file: string): Promise<T> {
   const res = await fetch(`${base}${file}`);
@@ -18,4 +19,10 @@ export async function loadUnitDefs(): Promise<UnitDefs> {
   return defs;
 }
 
-export const loadMap = (): Promise<MapData> => fetchJson<MapData>(MAP_FILE);
+export async function loadMap(): Promise<MapData> {
+  const [map, hexMap] = await Promise.all([
+    fetchJson<MapConfig>(MAP_FILE),
+    fetchJson<HexMapData>(HEX_FILE),
+  ]);
+  return { ...map, hexes: hexMap.hexes };
+}

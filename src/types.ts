@@ -35,7 +35,15 @@ export interface HexData {
   river_score: number;
 }
 
-/** マップJSON(map1.json)の中身 */
+/** map.json の中身 */
+export type MapConfig = Omit<MapData, 'hexes'>;
+
+/** hex.json の中身 */
+export interface HexMapData {
+  hexes: HexData[];
+}
+
+/** 読み込み後のマップデータ */
 export interface MapData {
   name?: string;
   hexes: HexData[];
