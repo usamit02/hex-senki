@@ -3,7 +3,7 @@ import { validateUnitDefs } from './validate';
 
 const base = import.meta.env.BASE_URL;
 
-/** 読み込むファイル名(public/ に置く)。要件4・6: 地形は hex.json、初期配置は map.json */
+/** 読み込むファイル名(public/ に置く)。地形は hex.json、初期配置・首都は map.json */
 export const MAP_FILE = 'map.json';
 export const HEX_FILE = 'hex.json';
 

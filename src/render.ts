@@ -19,6 +19,29 @@ export interface BoardCallbacks {
   onHexRightClick(c: Cube | null, screen: { x: number; y: number }): void;
 }
 
+/** 3Dモデル表示用: ユニットの画面(CSSピクセル)位置と大きさ */
+export interface UnitView {
+  unit: import('./types').Unit;
+  x: number;
+  y: number;
+  /** ヘックス半径の画面ピクセル */
+  size: number;
+}
+
+let modelsActive = false;
+/** 3Dモデル層(render3d.ts)が使えるようになったら true にする。false の間は2Dの駒を描く */
+export function setModelsActive(v: boolean): void {
+  modelsActive = v;
+}
+export function getModelsActive(): boolean {
+  return modelsActive;
+}
+
+/** 現在のカメラで全ユニットの画面位置を返す(3Dモデル層が毎フレーム使う) */
+export function getUnitViews(g: Game): UnitView[] {
+  return boardBridge.scene?.unitViews(g) ?? [];
+}
+
 export interface Renderer {
   start(g: Game, cb: BoardCallbacks): void;
   draw(g: Game): void;
@@ -87,6 +110,19 @@ class BoardScene extends Phaser.Scene {
 
   setGame(g: Game): void {
     this.gameRef = g;
+  }
+
+  /** 3Dモデル層用: ユニットの画面座標(CSSピクセル)をカメラの worldView から換算する */
+  unitViews(g: Game): UnitView[] {
+    const cam = this.cameras.main;
+    const wv = cam.worldView;
+    const out: UnitView[] = [];
+    for (const u of g.units) {
+      if (u.hp <= 0) continue;
+      const p = toPixel(u, HEX_SIZE);
+      out.push({ unit: u, x: (p.x - wv.x) * cam.zoom, y: (p.y - wv.y) * cam.zoom, size: HEX_SIZE * cam.zoom });
+    }
+    return out;
   }
 
   /** 新規ゲーム用: Scene は作り直さず、静的レイヤーだけ再構築して全体表示に戻す */
@@ -197,6 +233,7 @@ class BoardScene extends Phaser.Scene {
       this.builtFor = g;
       this.buildStatic(g);
     }
+    this.drawTowns(g);
     this.drawHighlight(g);
     this.drawUnits(g);
   }
@@ -271,23 +308,12 @@ class BoardScene extends Phaser.Scene {
       drawLine(r.tiles, national ? ROAD_NATIONAL : ROAD_OTHER, size * (national ? 0.26 : 0.2), 'road');
     }
 
-    // --- 都市アイコン(ヘックス中央) ---
-    const gtw = this.gTowns;
-    gtw.clear();
+    // --- 都市名ラベル(静的)。アイコンと所有リングは占領で変わるため drawTowns で毎回描く ---
     for (const t of this.townLabels) t.destroy();
     this.townLabels = [];
     for (const town of g.towns) {
       const { x, y } = toPixel(town.at, size);
-      // ビル群アイコン
-      gtw.fillStyle(0x2f3b4c, 1);
-      gtw.fillRect(x - size * 0.34, y - size * 0.05, size * 0.2, size * 0.34);
-      gtw.fillRect(x - size * 0.1, y - size * 0.3, size * 0.26, size * 0.59);
-      gtw.fillRect(x + size * 0.2, y - size * 0.12, size * 0.18, size * 0.41);
-      gtw.fillStyle(0xf5d76e, 1);
-      gtw.fillRect(x - size * 0.04, y - size * 0.2, size * 0.05, size * 0.07);
-      gtw.fillRect(x + size * 0.05, y - size * 0.08, size * 0.05, size * 0.07);
-      gtw.fillRect(x - size * 0.28, y + size * 0.05, size * 0.05, size * 0.07);
-      const label = this.add.text(x, y + size * 0.48, town.name, {
+      const label = this.add.text(x, y + size * 0.48, town.capital ? `★${town.name}` : town.name, {
         fontSize: '11px', color: '#ffffff',
         backgroundColor: 'rgba(20,26,34,0.55)', padding: { x: 3, y: 1 },
       }).setOrigin(0.5, 0).setDepth(3);
@@ -297,10 +323,43 @@ class BoardScene extends Phaser.Scene {
     for (const t of this.townLabels) t.setVisible(this.labelsVisible);
   }
 
+  /** 都市アイコン+所有リング(占領状態で変わるため refresh のたびに描き直す) */
+  private drawTowns(g: Game): void {
+    const size = HEX_SIZE;
+    const gtw = this.gTowns;
+    gtw.clear();
+    const cs = getComputedStyle(document.documentElement);
+    const player = hexToInt(cs.getPropertyValue('--pl').trim() || '#1f6fb5');
+    const enemy = hexToInt(cs.getPropertyValue('--en').trim() || '#c2392f');
+    for (const town of g.towns) {
+      const { x, y } = toPixel(town.at, size);
+      const ring = town.owner === 'p' ? player : town.owner === 'e' ? enemy : NEUTRAL;
+      gtw.lineStyle(town.capital ? 4 : 2, ring, 1);
+      gtw.strokeCircle(x, y, size * 0.44);
+      // ビル群アイコン
+      gtw.fillStyle(0x2f3b4c, 1);
+      gtw.fillRect(x - size * 0.34, y - size * 0.05, size * 0.2, size * 0.34);
+      gtw.fillRect(x - size * 0.1, y - size * 0.3, size * 0.26, size * 0.59);
+      gtw.fillRect(x + size * 0.2, y - size * 0.12, size * 0.18, size * 0.41);
+      gtw.fillStyle(0xf5d76e, 1);
+      gtw.fillRect(x - size * 0.04, y - size * 0.2, size * 0.05, size * 0.07);
+      gtw.fillRect(x + size * 0.05, y - size * 0.08, size * 0.05, size * 0.07);
+      gtw.fillRect(x - size * 0.28, y + size * 0.05, size * 0.05, size * 0.07);
+    }
+  }
+
   private drawHighlight(g: Game): void {
     const size = HEX_SIZE;
     const gh = this.gHighlight;
     gh.clear();
+    // 選択中ヘックス(ユニットの有無によらず左クリックで選択される)
+    if (g.selectedHex) {
+      const { x, y } = toPixel(g.selectedHex, size);
+      gh.lineStyle(3, 0x22d3ee, 1);
+      gh.strokePoints(hexCorners(x, y, size, 0.97), true);
+      gh.fillStyle(0x22d3ee, 0.12);
+      gh.fillPoints(hexCorners(x, y, size, 0.97), true);
+    }
     if (g.reach) {
       for (const k of g.reach.keys()) {
         const t = g.tiles.get(k);
@@ -340,20 +399,29 @@ class BoardScene extends Phaser.Scene {
       const { x, y } = toPixel(u, size);
       const c = this.add.container(x, y);
       const circle = this.add.graphics();
-      circle.fillStyle(u.side === 'p' ? player : enemy, 1);
-      circle.fillCircle(0, 0, size * 0.5);
+      // 影(3Dモデル表示時も共通)
+      circle.fillStyle(0x000000, 0.28);
+      circle.fillEllipse(0, size * 0.42, size * 0.82, size * 0.3);
+      if (!modelsActive) {
+        circle.fillStyle(u.side === 'p' ? player : enemy, 1);
+        circle.fillCircle(0, 0, size * 0.5);
+      }
       if (g.selected === u) {
         circle.lineStyle(3, 0xffffff, 1);
-        circle.strokeCircle(0, 0, size * 0.5);
+        circle.strokeCircle(0, 0, size * 0.52);
       }
-      const name = this.add.text(0, -1, g.defs[u.kind].name, {
-        fontSize: `${Math.round(size * 0.5)}px`, color: '#ffffff', fontStyle: 'bold',
-      }).setOrigin(0.5);
       const hp = this.add.text(size * 0.55, size * 0.5, String(u.hp), {
         fontSize: `${Math.round(size * 0.32)}px`, color: '#ffffff', fontStyle: 'bold',
         backgroundColor: 'rgba(20,26,34,0.55)', padding: { x: 2, y: 0 },
       }).setOrigin(0.5);
-      c.add([circle, name, hp]);
+      if (modelsActive) {
+        c.add([circle, hp]);
+      } else {
+        const name = this.add.text(0, -1, g.defs[u.kind].short, {
+          fontSize: `${Math.round(size * 0.5)}px`, color: '#ffffff', fontStyle: 'bold',
+        }).setOrigin(0.5);
+        c.add([circle, name, hp]);
+      }
       if (u.side === 'p' && u.moved && u.acted) c.setAlpha(0.45);
       this.unitLayer.add(c);
     }

@@ -8,6 +8,13 @@ export const MAX_MAP_COLS = 100;
 export const MAX_MAP_ROWS = 100;
 export const MAX_UNITS_PER_SIDE = 100;
 
+/** ユニットの移動区分: 地上は地形の影響を受け、航空は受けない */
+export type Domain = 'ground' | 'air';
+
+/** 相性(3すくみ等)の区分。vs のキーになる */
+export type Category = 'tank' | 'sam' | 'jet' | 'heli' | 'infantry';
+export const CATEGORIES: readonly Category[] = ['tank', 'sam', 'jet', 'heli', 'infantry'];
+
 /** キューブ座標。常に x + y + z = 0 が成り立つ */
 export interface Cube {
   x: number;
@@ -18,12 +25,24 @@ export interface Cube {
 /** units.json の1種類分の定義 */
 export interface UnitDef {
   name: string;
+  /** 盤面の駒に表示する短い文字 */
+  short: string;
   hp: number;
   move: number;
   attack: number;
+  /** 防御力(受けるダメージから差し引く) */
+  defense: number;
   minRange: number;
   range: number;
   cost: number;
+  domain: Domain;
+  category: Category;
+  /** 対応する3Dモデル(unit_models のファイル名の元: tank / sam / jet / heli / infantry) */
+  model: string;
+  /** towns を占領できるか(歩兵のみ true) */
+  canCapture: boolean;
+  /** 相手カテゴリごとの攻撃倍率(3すくみ: 戦車>対空ミサイル>飛行機>戦車) */
+  vs: Record<Category, number>;
 }
 export type UnitDefs = Record<string, UnitDef>;
 
@@ -67,10 +86,13 @@ export interface HexMapData {
   towns?: TownData[];
 }
 
-/** map.json の中身(初期配置)。cities は旧形式互換のため任意 */
+/** map.json の中身(初期配置)。citys は首都にする towns の名前 */
 export interface MapConfig {
   name?: string;
   terrain?: Record<string, string>;
+  /** 首都: 陣営ごとに towns の名前で指定する(例: { "p": "滝川市", "e": "伊達市" }) */
+  citys?: Partial<Record<Side, string>>;
+  /** 旧形式の城/村配置(互換用) */
   cities?: Array<{ col: number; row: number; owner: Side | null; capital?: boolean }>;
   gold: Record<Side, number>;
   units: Array<{ side: Side; type: string; col: number; row: number }>;
@@ -100,7 +122,7 @@ export interface Tile extends Cube {
   riverScore: number;
 }
 
-/** ゲーム内に取り込んだ都市(hex.json towns 由来) */
+/** ゲーム内に取り込んだ都市(hex.json towns 由来)。占領で owner が変わる */
 export interface Town {
   jiscode: string;
   name: string;
@@ -109,6 +131,9 @@ export interface Town {
   at: Cube;
   col: number;
   row: number;
+  owner: Side | null;
+  /** 首都ならその陣営(開始時の指定)。占領されても「どちらの首都か」は変わらない */
+  capital: Side | null;
 }
 
 /** ゲーム内に取り込んだ道路・河川 */
@@ -125,7 +150,8 @@ export interface Unit extends Cube {
   hp: number;
   moved: boolean;
   acted: boolean;
-  from: { pos: Cube; cityOwner: Side | null } | null;
+  /** 移動取り消し用: 移動前の位置と、移動先の拠点・towns の元の持ち主 */
+  from: { pos: Cube; cityOwner: Side | null; townHexId: number | null; townOwner: Side | null } | null;
 }
 
 export interface Game {
@@ -144,5 +170,7 @@ export interface Game {
   busy: boolean;
   message: string;
   selected: Unit | null;
+  /** 左クリックで選択中のヘックス(ユニットの有無によらず保持する) */
+  selectedHex: Tile | null;
   reach: Map<string, number> | null;
 }

@@ -28,7 +28,8 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:"Hiragino Sans","
 .pane-bottom{left:0;right:0;bottom:0;max-height:55vh;transform:translateY(105%)}
 .pane.open{transform:none}
 .pane .note{font-size:.8rem;opacity:.75}
-#recruit{display:flex;flex-direction:column;gap:6px;align-items:stretch}
+#produce{display:flex;flex-direction:column;gap:6px;align-items:stretch}
+#produce-target{font-size:.85rem;margin-bottom:8px;min-height:1.4em}
 #msg{min-height:1.6em;margin-bottom:8px;font-size:.95rem}
 .bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px}
 button{font:inherit;font-size:.9rem;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);cursor:pointer}
@@ -43,3 +44,7 @@ details{font-size:.85rem}
 #ctx .ctx-info{padding:2px 4px 8px;border-bottom:1px solid var(--line);margin-bottom:6px;line-height:1.55}
 #ctx button{display:block;width:100%;text-align:left;border:none;background:transparent;padding:6px 8px;border-radius:5px}
 #ctx button:hover:not(:disabled){background:color-mix(in srgb,var(--ac) 16%,transparent)}
+.unit-row{font-size:.82rem;padding:5px 6px;border-bottom:1px solid var(--line)}
+
+/* 3Dモデル表示層(Phaser の上、ペインの下。操作は受けない) */
+#models-layer{position:fixed;inset:0;z-index:5;pointer-events:none;width:100%;height:100%}

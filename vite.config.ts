@@ -9,6 +9,6 @@ export default defineConfig({
   },
   build: {
     // Phaser を含むためチャンク警告の閾値を上げる
-    chunkSizeWarningLimit: 1600,
+    chunkSizeWarningLimit: 2200,
   },
 });

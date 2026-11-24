@@ -1,9 +1,10 @@
-import { canRecruit } from './rules';
-import { income, liveUnits } from './state';
+import { canProduce } from './rules';
+import { income, liveUnits, producibleHexKeys } from './state';
+import { key } from './hex';
 import { MAX_UNITS_PER_SIDE, type Game } from './types';
 
 export interface HudHandlers {
-  onRecruit(kind: string): void;
+  onProduce(kind: string): void;
   onEndTurn(): void;
   onNewGame(): void;
   onFitView(): void;
@@ -15,15 +16,17 @@ export interface ContextAction {
   run(): void;
 }
 
+export type PaneSide = 'left' | 'right' | 'bottom';
+
 export interface Hud {
   setup(g: Game): void;
   update(g: Game): void;
   showError(text: string): void;
-  /** 要件3・5: 右クリックメニュー(情報HTML + コマンド) */
   showContext(x: number, y: number, infoHtml: string, actions: ContextAction[]): void;
   hideContext(): void;
-  /** 左ペインにも同じ情報を出す */
   showInfo(html: string): void;
+  /** 指定したペインを開く(他は閉じる) */
+  openPane(side: PaneSide): void;
 }
 
 const el = <T extends HTMLElement>(id: string): T => {
@@ -37,28 +40,33 @@ export function createHud(handlers: HudHandlers): Hud {
   const goldLabel = el('gd');
   const message = el('msg');
   const info = el('info');
-  const recruitBox = el('recruit');
+  const produceBox = el('produce');
+  const produceTarget = el('produce-target');
   const endTurn = el<HTMLButtonElement>('be');
   const newGame = el<HTMLButtonElement>('bn');
   const fitView = el<HTMLButtonElement>('bf');
   const ctx = el('ctx');
-  const recruitButtons = new Map<string, HTMLButtonElement>();
+  const produceButtons = new Map<string, HTMLButtonElement>();
 
   endTurn.onclick = handlers.onEndTurn;
   newGame.onclick = handlers.onNewGame;
   fitView.onclick = handlers.onFitView;
 
-  // 隠れるペインの開閉(画面端タブ)
-  const panes: Array<[string, string]> = [
-    ['tab-left', 'pane-left'],
-    ['tab-right', 'pane-right'],
-    ['tab-bottom', 'pane-bottom'],
+  const paneIds: Record<PaneSide, string> = { left: 'pane-left', right: 'pane-right', bottom: 'pane-bottom' };
+  const openPane = (side: PaneSide): void => {
+    for (const id of Object.values(paneIds)) el(id).classList.remove('open');
+    el(paneIds[side]).classList.add('open');
+  };
+  const tabs: Array<[string, PaneSide]> = [
+    ['tab-left', 'left'],
+    ['tab-right', 'right'],
+    ['tab-bottom', 'bottom'],
   ];
-  for (const [tabId, paneId] of panes) {
+  for (const [tabId, side] of tabs) {
     el(tabId).addEventListener('click', () => {
-      const pane = el(paneId);
+      const pane = el(paneIds[side]);
       const willOpen = !pane.classList.contains('open');
-      for (const [, otherId] of panes) el(otherId).classList.remove('open');
+      for (const id of Object.values(paneIds)) el(id).classList.remove('open');
       if (willOpen) pane.classList.add('open');
     });
   }
@@ -76,21 +84,42 @@ export function createHud(handlers: HudHandlers): Hud {
 
   return {
     setup(g) {
-      recruitBox.replaceChildren();
-      recruitButtons.clear();
+      produceBox.replaceChildren();
+      produceButtons.clear();
       for (const [kind, def] of Object.entries(g.defs)) {
         const b = document.createElement('button');
-        b.textContent = `${def.name}を雇う(${def.cost})`;
-        b.onclick = () => handlers.onRecruit(kind);
-        recruitBox.append(b);
-        recruitButtons.set(kind, b);
+        b.textContent = `${def.name}を生産 (${def.cost}G)`;
+        b.onclick = () => handlers.onProduce(kind);
+        produceBox.append(b);
+        produceButtons.set(kind, b);
+      }
+      const hr = document.createElement('div');
+      hr.className = 'unit-row';
+      hr.textContent = '― ユニット性能 ―';
+      produceBox.append(hr);
+      for (const def of Object.values(g.defs)) {
+        const d = document.createElement('div');
+        d.className = 'unit-row';
+        d.textContent =
+          `${def.name}(${def.domain === 'air' ? '航空' : '地上'}) HP${def.hp} 移${def.move} 攻${def.attack} 防${def.defense} 射${def.minRange}〜${def.range}` +
+          (def.canCapture ? ' / 占領可' : '');
+        produceBox.append(d);
       }
     },
     update(g) {
       turnLabel.textContent = `ターン ${g.turn}`;
       goldLabel.textContent = `資金 ${g.gold.p}(+${income(g, 'p')}) / 部隊 ${liveUnits(g, 'p').length}/${MAX_UNITS_PER_SIDE}`;
       message.textContent = g.message;
-      for (const [kind, b] of recruitButtons) b.disabled = !canRecruit(g, kind);
+      const t = g.selectedHex;
+      const producible = !!t && producibleHexKeys(g, 'p').has(key(t));
+      produceTarget.textContent = !t
+        ? 'ヘックスを選択すると、生産できる場合はここから生産できます。'
+        : producible
+          ? `生産先: col ${t.col} / row ${t.row}(生産可能)`
+          : `選択中: col ${t.col} / row ${t.row}(ここでは生産できません)`;
+      for (const [kind, b] of produceButtons) {
+        b.disabled = !(t && canProduce(g, 'p', kind, t));
+      }
       endTurn.disabled = g.busy || g.over;
     },
     showError(text) {
@@ -114,7 +143,6 @@ export function createHud(handlers: HudHandlers): Hud {
         ctx.append(b);
       }
       ctx.hidden = false;
-      // 画面端ではみ出さないよう位置を調整
       const w = ctx.offsetWidth;
       const h = ctx.offsetHeight;
       ctx.style.left = `${Math.max(4, Math.min(x, window.innerWidth - w - 8))}px`;
@@ -124,5 +152,6 @@ export function createHud(handlers: HudHandlers): Hud {
     showInfo(html) {
       info.innerHTML = html;
     },
+    openPane,
   };
 }

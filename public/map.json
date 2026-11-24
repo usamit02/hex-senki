@@ -8,34 +8,13 @@
     "castle": "城",
     "marsh": "沼"
   },
+  "citys": {
+    "p": "滝川市",
+    "e": "伊達市"
+  },
   "gold": {
     "p": 20,
     "e": 20
   },
-  "units": [
-    {
-      "side": "p",
-      "type": "infantry_swordsman",
-      "col": 1,
-      "row": 2
-    },
-    {
-      "side": "p",
-      "type": "ranged_archer",
-      "col": 1,
-      "row": 4
-    },
-    {
-      "side": "e",
-      "type": "infantry_swordsman",
-      "col": 7,
-      "row": 2
-    },
-    {
-      "side": "e",
-      "type": "ranged_archer",
-      "col": 7,
-      "row": 4
-    }
-  ]
+  "units": []
 }

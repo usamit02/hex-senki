@@ -1,4 +1,4 @@
-import { equals, fromOffset, key, pos } from './hex';
+import { distance, equals, fromOffset, key, neighbors, pos } from './hex';
 import { isTerrainKind } from './terrain';
 import {
   MAX_MAP_COLS,
@@ -16,6 +16,12 @@ import {
   type UnitDefs,
 } from './types';
 
+/** 収入: 占領済み towns(首都含む)の人口 INCOME_POPULATION_UNIT 人につき 1 gold(最低1/都市) */
+export const INCOME_POPULATION_UNIT = 1000;
+/** 生産対象になる占領 towns の範囲: 首都からこの距離(ヘックス数)以内にある towns */
+export const PRODUCE_TOWN_RADIUS = 5;
+
+/** towns の無い旧マップ用収入 */
 export const BASE_INCOME = 3;
 export const CITY_INCOME = 3;
 
@@ -27,24 +33,32 @@ export const unitAt = (g: Game, c: Cube): Unit | undefined =>
 export const liveUnits = (g: Game, side: Side): Unit[] =>
   g.units.filter((u) => u.hp > 0 && u.side === side);
 
-/** 首都のあるタイル。cities の無いマップ(map.json に都市配置が無い場合)は null */
+/** 首都のあるタイル(その陣営の首都として指定された towns のヘックス) */
 export function capitalOf(g: Game, side: Side): Tile | null {
   for (const t of g.tiles.values()) if (t.city?.capital === side) return t;
   return null;
 }
 
-export const hasCapital = (g: Game, side: Side): boolean => capitalOf(g, side) !== null;
-
 export const citiesOf = (g: Game, side: Side): Tile[] =>
   [...g.tiles.values()].filter((t) => t.city?.owner === side);
 
-export const income = (g: Game, side: Side): number =>
-  BASE_INCOME + CITY_INCOME * citiesOf(g, side).length;
+export const ownedTowns = (g: Game, side: Side): Town[] => g.towns.filter((t) => t.owner === side);
+
+/** 1ターンの収入: 占領済み towns の人口に応じて増える */
+export function income(g: Game, side: Side): number {
+  if (g.towns.length > 0) {
+    return ownedTowns(g, side).reduce(
+      (sum, t) => sum + Math.max(1, Math.floor(t.population / INCOME_POPULATION_UNIT)),
+      0,
+    );
+  }
+  return BASE_INCOME + CITY_INCOME * citiesOf(g, side).length;
+}
 
 export const cheapestCost = (g: Game): number =>
   Math.min(...Object.values(g.defs).map((d) => d.cost));
 
-/** 雇った直後の駒は、そのターンは動けない。要件1: 各陣営100部隊が上限 */
+/** 生産した直後の駒は、そのターンは動けない。各陣営100部隊が上限 */
 export function spawn(g: Game, side: Side, kind: string, at: Cube): boolean {
   if (liveUnits(g, side).length >= MAX_UNITS_PER_SIDE) return false;
   g.units.push({
@@ -114,13 +128,7 @@ export function createGame(defs: UnitDefs, map: MapData): Game {
     return t;
   };
 
-  for (const c of map.cities ?? []) {
-    const t = tileAtOffset(c.col, c.row);
-    t.terrain = 'plain';
-    t.city = { owner: c.owner, capital: c.capital ? c.owner : null };
-  }
-
-  // 要件5: 都市は hex.json の towns から取り込む(ヘックス中央にアイコン表示)
+  // towns を取り込む(初期状態は未占領)
   const towns: Town[] = [];
   for (const t of map.towns) {
     const tile = tilesById.get(t.hex_id);
@@ -133,10 +141,34 @@ export function createGame(defs: UnitDefs, map: MapData): Game {
       at: pos(tile),
       col: tile.col,
       row: tile.row,
+      owner: null,
+      capital: null,
     });
   }
 
-  // 要件1: 初期配置も各陣営100部隊まで
+  // 首都: map.json の citys で towns 名を指定する。その towns は開始時点で所有済みになる
+  for (const side of ['p', 'e'] as Side[]) {
+    const name = map.citys?.[side];
+    if (!name) continue;
+    const town = towns.find((t) => t.name === name);
+    if (!town) {
+      throw new Error(`map.json: citys の "${name}" が hex.json の towns に見つかりません`);
+    }
+    town.owner = side;
+    town.capital = side;
+    const tile = tilesById.get(town.hexId);
+    if (tile) tile.city = { owner: side, capital: side };
+  }
+
+  // 旧形式 cities(互換): citys が無い場合のみ使う
+  if (!map.citys) {
+    for (const c of map.cities ?? []) {
+      const t = tileAtOffset(c.col, c.row);
+      t.terrain = 'plain';
+      t.city = { owner: c.owner, capital: c.capital ? c.owner : null };
+    }
+  }
+
   const counts: Record<Side, number> = { p: 0, e: 0 };
   const units: Unit[] = map.units.map((u) => {
     const def = defs[u.type];
@@ -159,8 +191,9 @@ export function createGame(defs: UnitDefs, map: MapData): Game {
     turn: 1,
     over: false,
     busy: false,
-    message: 'あなたのターンです。自分の駒をクリックしてください。',
+    message: 'あなたのターンです。右クリックで生産、自分の駒をクリックして移動・攻撃。',
     selected: null,
+    selectedHex: null,
     reach: null,
   };
   return game;
@@ -177,4 +210,29 @@ export function linesAt(g: Game, tile: Tile): LineFeature[] {
 
 export function townAt(g: Game, c: Cube): Town | undefined {
   return g.towns.find((t) => equals(t.at, c));
+}
+
+/**
+ * 生産できるヘックスの一覧(キー文字列の集合)。
+ * - 首都(自陣営が所有中)のヘックスと、その隣接ヘックス
+ * - 首都から PRODUCE_TOWN_RADIUS(5)ヘックス以内にある占領済み towns のヘックスそのもの
+ *   (首都以外の占領 towns の隣接ヘックスは対象外。首都から遠い占領 towns も対象外)
+ */
+export function producibleHexKeys(g: Game, side: Side): Set<string> {
+  const out = new Set<string>();
+  const cap = capitalOf(g, side);
+  if (cap && cap.city?.owner === side) {
+    out.add(key(cap));
+    for (const n of neighbors(cap)) {
+      const t = tileAt(g, n);
+      if (t) out.add(key(t));
+    }
+    for (const town of ownedTowns(g, side)) {
+      if (distance(cap, town.at) <= PRODUCE_TOWN_RADIUS) out.add(key(town.at));
+    }
+  } else if (!cap) {
+    // 首都の無い旧マップ用: 占領済み towns のヘックスのみ
+    for (const town of ownedTowns(g, side)) out.add(key(town.at));
+  }
+  return out;
 }
