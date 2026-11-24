@@ -6,23 +6,51 @@
 <title>ヘックス戦記</title>
 </head>
 <body>
-<main>
-  <h1>ヘックス戦記</h1>
-  <div class="bar">
+  <!-- 要件3: マップをブラウザ全面に表示。操作・情報は右クリックメニューと隠れるペインで行う -->
+  <div id="game-container" aria-label="ゲーム盤"></div>
+
+  <!-- 常時表示は最小限: ターンと資金だけ -->
+  <div id="hud-chip">
     <span class="stat" id="tn"></span><span class="stat" id="gd"></span>
-    <span id="recruit"></span>
-    <button id="be" class="go">ターン終了</button><button id="bn">新規ゲーム</button>
   </div>
-  <canvas id="c" tabindex="0" aria-label="ゲーム盤"></canvas>
-  <div id="msg"></div>
-  <details>
-    <summary>遊び方</summary>
-    <p>青があなたの軍です。自分の駒をタップして選び、光ったマスへ移動、赤い枠の敵をタップして攻撃します。</p>
-    <p>城と村は踏むと自分のものになり、毎ターンの資金が増えます。資金で自分の城に駒を雇えます(駒の能力は units.json で決まります)。地形によって移動コストと防御が変わります(平地は移動コスト1、森は2で防御+1、山は3で防御+2、水は通れません)。味方の駒は通り抜けられますが、敵の駒は通れません。</p>
-    <p>選択した駒をもう一度クリック(タップ)すると、その駒の行動を確定して終了します(移動せずにクリックすると待機)。確定する前なら、右クリック(スマホは長押し)で移動を取り消せます。攻撃した後は取り消せません。何もないマスをタップすると選択を解除できます。</p>
-    <p>敵の城を奪うか、敵の駒を全滅させると勝ちです。</p>
-  </details>
-</main>
+
+  <!-- 画面端のタブ(ペインの開閉) -->
+  <button id="tab-left" class="edge-tab edge-left" title="情報ペイン">情報</button>
+  <button id="tab-right" class="edge-tab edge-right" title="雇用ペイン">雇用</button>
+  <button id="tab-bottom" class="edge-tab edge-bottom" title="ログ・操作ペイン">操作</button>
+
+  <!-- 左ペイン: 選択中・ヘックス情報 -->
+  <aside id="pane-left" class="pane pane-left">
+    <h2>情報</h2>
+    <div id="info">ヘックスを右クリックすると、都市・部隊・地形の情報が表示されます。</div>
+  </aside>
+
+  <!-- 右ペイン: 雇用 -->
+  <aside id="pane-right" class="pane pane-right">
+    <h2>雇用(自分の城)</h2>
+    <div id="recruit"></div>
+    <p class="note">城のあるマップでのみ雇えます。部隊は各陣営100まで。</p>
+  </aside>
+
+  <!-- 下ペイン: メッセージとコマンド -->
+  <aside id="pane-bottom" class="pane pane-bottom">
+    <div id="msg"></div>
+    <div class="bar">
+      <button id="be" class="go">ターン終了</button>
+      <button id="bf">全体表示</button>
+      <button id="bn">新規ゲーム</button>
+    </div>
+    <details>
+      <summary>遊び方</summary>
+      <p>青があなたの軍です。自分の駒をクリックして選び、光ったマスへ移動、赤い枠の敵をクリックして攻撃します。ホイールで拡大/縮小、ドラッグでスクロール、矢印キー/WASDでも移動できます。</p>
+      <p>ヘックスを右クリックすると情報とコマンドのメニューが出ます。都市アイコンは hex.json の towns の情報です。道路・河川は編集アプリと同じく「中心→辺の中点→中心」で結ばれます。</p>
+      <p>選択した駒をもう一度クリックすると行動を確定します。確定前なら右クリックメニューから移動を取り消せます。</p>
+    </details>
+  </aside>
+
+  <!-- 右クリックメニュー -->
+  <div id="ctx" hidden></div>
+
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

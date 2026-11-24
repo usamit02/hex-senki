@@ -1,11 +1,11 @@
 import { distance, key, neighbors, pos, setPos } from './hex';
 import { capitalOf, cheapestCost, liveUnits, spawn, tileAt, unitAt } from './state';
 import { TERRAINS } from './terrain';
-import type { Cube, Game, Side, Tile, Unit } from './types';
+import { MAX_UNITS_PER_SIDE, type Cube, type Game, type Side, type Tile, type Unit } from './types';
 
 const sideName = (s: Side): string => (s === 'p' ? 'あなた' : '敵');
 
-/** 駒が移動できるマスと、その移動コスト(地形ごとの移動コストを足していく。水と敵の駒のいるマスは通れない。味方の駒は通り抜けられるが、止まれない) */
+/** 駒が移動できるマスと、その移動コスト */
 export function reachable(g: Game, u: Unit): Map<string, number> {
   const def = g.defs[u.kind];
   const res = new Map<string, number>([[key(u), 0]]);
@@ -29,7 +29,6 @@ export function reachable(g: Game, u: Unit): Map<string, number> {
       }
     }
   }
-  // 味方の駒がいるマスは通り抜けられるだけで、移動先にはできない
   const start = key(u);
   for (const k of [...res.keys()]) {
     if (k === start) continue;
@@ -101,10 +100,14 @@ export function attack(g: Game, a: Unit, d: Unit): void {
 export function checkGameOver(g: Game): void {
   if (g.over) return;
   const broke = (s: Side): boolean => liveUnits(g, s).length === 0 && g.gold[s] < cheapestCost(g);
-  if (capitalOf(g, 'p').city?.owner === 'e' || broke('p')) {
+  const annihilated = (s: Side): boolean =>
+    liveUnits(g, s).length === 0 && capitalOf(g, s) === null;
+  const pCap = capitalOf(g, 'p');
+  const eCap = capitalOf(g, 'e');
+  if ((pCap && pCap.city?.owner === 'e') || broke('p') || annihilated('p')) {
     g.over = true;
     g.message = '敗北…。「新規ゲーム」で再挑戦できます。';
-  } else if (capitalOf(g, 'e').city?.owner === 'p' || broke('e')) {
+  } else if ((eCap && eCap.city?.owner === 'p') || broke('e') || annihilated('e')) {
     g.over = true;
     g.message = '勝利!「新規ゲーム」でもう一度遊べます。';
   }
@@ -113,14 +116,18 @@ export function checkGameOver(g: Game): void {
 export function canRecruit(g: Game, kind: string): boolean {
   const def = g.defs[kind];
   if (!def || g.busy || g.over) return false;
+  if (liveUnits(g, 'p').length >= MAX_UNITS_PER_SIDE) return false;
   const c = capitalOf(g, 'p');
+  if (!c) return false;
   return c.city?.owner === 'p' && !unitAt(g, c) && g.gold.p >= def.cost;
 }
 
 export function recruit(g: Game, kind: string): boolean {
   if (!canRecruit(g, kind)) return false;
+  const c = capitalOf(g, 'p');
+  if (!c) return false;
   g.gold.p -= g.defs[kind].cost;
-  spawn(g, 'p', kind, capitalOf(g, 'p'));
+  spawn(g, 'p', kind, c);
   g.message = `${g.defs[kind].name}を雇いました。`;
   return true;
 }

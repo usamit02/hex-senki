@@ -1,34 +1,13 @@
 {
   "name": "平原の戦い",
-  "legend": {
+  "terrain": {
     "plain": "平地",
     "forest": "森",
-    "water": "水"
+    "water": "水",
+    "mountain": "山",
+    "castle": "城",
+    "marsh": "沼"
   },
-  "cities": [
-    {
-      "col": 0,
-      "row": 3,
-      "owner": "p",
-      "capital": true
-    },
-    {
-      "col": 8,
-      "row": 3,
-      "owner": "e",
-      "capital": true
-    },
-    {
-      "col": 3,
-      "row": 1,
-      "owner": null
-    },
-    {
-      "col": 5,
-      "row": 5,
-      "owner": null
-    }
-  ],
   "gold": {
     "p": 20,
     "e": 20

@@ -3,7 +3,12 @@ export type Side = 'p' | 'e';
 
 export type TerrainKind = 'plain' | 'forest' | 'mountain' | 'water' | 'marsh';
 
-/** キューブ座標。常に x + y + z = 0 が成り立つ(距離・隣接・回転の計算が簡単になる) */
+/** 要件1: マップ上限と部隊上限 */
+export const MAX_MAP_COLS = 100;
+export const MAX_MAP_ROWS = 100;
+export const MAX_UNITS_PER_SIDE = 100;
+
+/** キューブ座標。常に x + y + z = 0 が成り立つ */
 export interface Cube {
   x: number;
   y: number;
@@ -22,12 +27,11 @@ export interface UnitDef {
 }
 export type UnitDefs = Record<string, UnitDef>;
 
-/** マップJSONの1マス分 */
+/** hex.json の1マス分 */
 export interface HexData {
   id: number;
   col: number;
   row: number;
-  /** 実際の地図上の位置(メートル) */
   center_x: number;
   center_y: number;
   terrain: string;
@@ -35,37 +39,84 @@ export interface HexData {
   river_score: number;
 }
 
-/** map.json の中身 */
-export type MapConfig = Omit<MapData, 'hexes'>;
+/** hex.json の道路・河川1件分。path は hex id の並び */
+export interface LineData {
+  name: string;
+  path: number[];
+}
+
+/** hex.json の towns 1件分(編集アプリの保存形式) */
+export interface TownData {
+  jiscode: string;
+  name: string;
+  population: number;
+  hex_id: number;
+  members?: string[];
+}
 
 /** hex.json の中身 */
 export interface HexMapData {
+  settings?: {
+    hex_diameter_km?: number;
+    road_min_hex_count?: number;
+    river_min_hex_count?: number;
+  };
   hexes: HexData[];
+  roads?: LineData[];
+  rivers?: LineData[];
+  towns?: TownData[];
 }
 
-/** 読み込み後のマップデータ */
-export interface MapData {
+/** map.json の中身(初期配置)。cities は旧形式互換のため任意 */
+export interface MapConfig {
   name?: string;
-  hexes: HexData[];
-  cities: Array<{ col: number; row: number; owner: Side | null; capital?: boolean }>;
+  terrain?: Record<string, string>;
+  cities?: Array<{ col: number; row: number; owner: Side | null; capital?: boolean }>;
   gold: Record<Side, number>;
   units: Array<{ side: Side; type: string; col: number; row: number }>;
 }
 
+/** 読み込み後のマップデータ(map.json + hex.json を結合) */
+export interface MapData extends MapConfig {
+  hexes: HexData[];
+  roads: LineData[];
+  rivers: LineData[];
+  towns: TownData[];
+}
+
 export interface City {
   owner: Side | null;
-  /** 首都ならその陣営、そうでなければ null */
   capital: Side | null;
 }
 
 export interface Tile extends Cube {
   terrain: TerrainKind;
   city: City | null;
-  /** 以下はマップJSONの値。今後のCPU戦略で使えるよう保持する */
   id: number;
+  col: number;
+  row: number;
   geo: { x: number; y: number };
   roadScore: number;
   riverScore: number;
+}
+
+/** ゲーム内に取り込んだ都市(hex.json towns 由来) */
+export interface Town {
+  jiscode: string;
+  name: string;
+  population: number;
+  hexId: number;
+  at: Cube;
+  col: number;
+  row: number;
+}
+
+/** ゲーム内に取り込んだ道路・河川 */
+export interface LineFeature {
+  kind: 'road' | 'river';
+  name: string;
+  path: number[];
+  tiles: Cube[];
 }
 
 export interface Unit extends Cube {
@@ -74,7 +125,6 @@ export interface Unit extends Cube {
   hp: number;
   moved: boolean;
   acted: boolean;
-  /** 移動の取り消し用。移動前の位置と、移動先の城や村の元の持ち主 */
   from: { pos: Cube; cityOwner: Side | null } | null;
 }
 
@@ -83,14 +133,16 @@ export interface Game {
   width: number;
   height: number;
   tiles: Map<string, Tile>;
+  tilesById: Map<number, Tile>;
+  roads: LineFeature[];
+  rivers: LineFeature[];
+  towns: Town[];
   units: Unit[];
   gold: Record<Side, number>;
   turn: number;
   over: boolean;
-  /** 敵のターン中など、プレイヤーが操作できない間 true */
   busy: boolean;
   message: string;
   selected: Unit | null;
-  /** 選択中の駒が移動できるマス(キーは座標のキー文字列、値は移動コスト) */
   reach: Map<string, number> | null;
 }

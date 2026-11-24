@@ -3,7 +3,7 @@ import { validateUnitDefs } from './validate';
 
 const base = import.meta.env.BASE_URL;
 
-/** 読み込むマップのファイル名(public/ に置く) */
+/** 読み込むファイル名(public/ に置く)。要件4・6: 地形は hex.json、初期配置は map.json */
 export const MAP_FILE = 'map.json';
 export const HEX_FILE = 'hex.json';
 
@@ -24,5 +24,12 @@ export async function loadMap(): Promise<MapData> {
     fetchJson<MapConfig>(MAP_FILE),
     fetchJson<HexMapData>(HEX_FILE),
   ]);
-  return { ...map, hexes: hexMap.hexes };
+  return {
+    ...map,
+    cities: map.cities ?? [],
+    hexes: hexMap.hexes,
+    roads: hexMap.roads ?? [],
+    rivers: hexMap.rivers ?? [],
+    towns: hexMap.towns ?? [],
+  };
 }
