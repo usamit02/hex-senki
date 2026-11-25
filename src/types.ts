@@ -56,6 +56,10 @@ export interface UnitDef {
   isSupply?: boolean;
   /** 最大燃料。移動コストの合計がこの範囲まで動ける */
   fuel: number;
+  /** 戦闘機タイプ: 生産・補充・補給は空港でのみ可能(航空ユニット用) */
+  fighter?: boolean;
+  /** 輸送ユニット: 歩兵を1体搭乗させられる(トラック・ヘリなど) */
+  transport?: boolean;
   /** 武装(複数可)。空なら攻撃できない */
   weapons: WeaponDef[];
   /** 移動効果音の種類(sfx.ts のキー) */
@@ -104,6 +108,14 @@ export interface BattleFx {
   d: Cube;
   sfx: string;
   id: number;
+  /** ポップアップ表示用 */
+  aName: string;
+  dName: string;
+  weapon: string;
+  damage: number;
+  destroyed: boolean;
+  counterDamage: number;
+  counterDestroyed: boolean;
 }
 
 /** hex.json の1マス分 */
@@ -134,6 +146,11 @@ export interface TownData {
 }
 
 /** hex.json の中身 */
+export interface AirportData {
+  name: string;
+  hex_id: number;
+}
+
 export interface HexMapData {
   settings?: {
     hex_diameter_km?: number;
@@ -144,6 +161,7 @@ export interface HexMapData {
   roads?: LineData[];
   rivers?: LineData[];
   towns?: TownData[];
+  airports?: AirportData[];
 }
 
 /** map.json の中身(初期配置)。citys は首都にする towns の名前 */
@@ -164,6 +182,17 @@ export interface MapData extends MapConfig {
   roads: LineData[];
   rivers: LineData[];
   towns: TownData[];
+  airports: AirportData[];
+}
+
+/** ゲーム内に取り込んだ空港(hex.json airports 由来)。占領で owner が変わる */
+export interface Airport {
+  name: string;
+  hexId: number;
+  at: Cube;
+  col: number;
+  row: number;
+  owner: Side | null;
 }
 
 export interface City {
@@ -180,6 +209,10 @@ export interface Tile extends Cube {
   geo: { x: number; y: number };
   roadScore: number;
   riverScore: number;
+  /** 空港のあるヘックスか(hex.json の airports 由来) */
+  airport: boolean;
+  /** towns / 空港 のヘックスか(河川・水でも移動コスト1になる) */
+  facility: boolean;
   /** 道路が描かれているか(移動コスト1になる) */
   hasRoad: boolean;
   /** 河川が描かれているか(移動不可。道路と両方あれば橋でコスト1) */
@@ -198,6 +231,8 @@ export interface Town {
   owner: Side | null;
   /** 首都ならその陣営(開始時の指定)。占領されても「どちらの首都か」は変わらない */
   capital: Side | null;
+  /** 空港のある town か */
+  airport: boolean;
 }
 
 /** ゲーム内に取り込んだ道路・河川 */
@@ -216,6 +251,8 @@ export interface Unit extends Cube {
   ammo: Record<string, number>;
   /** 残り燃料。移動コスト分だけ減る。航空ユニットは 0 になると墜落する */
   fuel: number;
+  /** 搭乗中の輸送ユニット(搭乗していなければ null)。搭乗中は盤面に表示されず、輸送側と運命を共にする */
+  carriedBy: Unit | null;
   moved: boolean;
   acted: boolean;
   /** 移動取り消し用: 移動前の位置と、移動先の拠点・towns の元の持ち主 */
@@ -242,6 +279,9 @@ export interface Game {
   /** 左クリックで選択中のヘックス(ユニットの有無によらず保持する) */
   selectedHex: Tile | null;
   reach: Map<string, number> | null;
+  airports: Airport[];
+  /** 占領演出待ち(tryCapture が積み、画面側が消費する) */
+  pendingCapture: { at: Cube; side: Side } | null;
   /** 右クリック時に左ペインへ固定表示する情報(左クリックで解除) */
   pinnedInfo: string | null;
   /** 表示待ちの交戦演出(attack が積み、画面側が消費する) */

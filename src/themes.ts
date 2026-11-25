@@ -60,14 +60,14 @@ const MODERN: Theme = {
       ],
     },
     air_jet: {
-      name: '戦闘機', short: '機', hp: 14, move: 8, defense: 2, cost: 35, fuel: 16, domain: 'air', category: 'jet', model: 'jet', canCapture: false, moveSfx: 'jet',
+      name: '戦闘機', short: '機', hp: 14, move: 8, defense: 2, cost: 35, fuel: 16, domain: 'air', category: 'jet', model: 'jet', canCapture: false, fighter: true, moveSfx: 'jet',
       weapons: [
         { name: 'ミサイル', power: 8, minRange: 1, range: 1, ammo: 4, sfx: 'missile', vs: { tank: 1.5, sam: 1.2, heli: 1.2, jet: 1, infantry: 0.8, supply: 1 } },
         { name: '機関砲', power: 5, minRange: 1, range: 1, ammo: -1, sfx: 'gun', vs: { heli: 1.2, infantry: 1.3, tank: 0.7, sam: 0.8, supply: 1 } },
       ],
     },
     air_heli: {
-      name: 'ヘリコプター', short: 'ヘ', hp: 16, move: 6, defense: 2, cost: 30, fuel: 12, domain: 'air', category: 'heli', model: 'heli', canCapture: false, moveSfx: 'rotor',
+      name: 'ヘリコプター', short: 'ヘ', hp: 16, move: 6, defense: 2, cost: 30, fuel: 12, domain: 'air', category: 'heli', model: 'heli', canCapture: false, transport: true, moveSfx: 'rotor',
       weapons: [
         { name: '対戦車ミサイル', power: 7, minRange: 1, range: 1, ammo: 4, sfx: 'missile', vs: { tank: 1.3, infantry: 1.5, sam: 1, heli: 0.8, jet: 0.5, supply: 1.2 } },
         { name: 'ロケット弾', power: 5, minRange: 1, range: 1, ammo: 8, sfx: 'rocket', vs: { infantry: 1.3, tank: 0.9, sam: 0.9, supply: 1 } },
@@ -85,6 +85,10 @@ const MODERN: Theme = {
       weapons: [
         { name: '榴弾砲', power: 9, minRange: 2, range: 4, ammo: 6, sfx: 'cannon', vs: { tank: 1.1, sam: 1.2, infantry: 1.4, spg: 1, supply: 1.3, jet: 0.2, heli: 0.3 } },
       ],
+    },
+    ground_truck: {
+      name: 'トラック', short: 'ト', hp: 12, move: 6, defense: 0, cost: 15, fuel: 18, domain: 'ground', category: 'truck', model: 'truck', canCapture: false, transport: true, moveSfx: 'engine',
+      weapons: [],
     },
     ground_supply: {
       name: '補給車', short: '補', hp: 12, move: 4, defense: 1, cost: 15, fuel: 12, domain: 'ground', category: 'supply', model: 'supply', canCapture: false, isSupply: true, moveSfx: 'wheel',
@@ -145,8 +149,12 @@ const FANTASY: Theme = {
         { name: '投石', power: 9, minRange: 2, range: 4, ammo: 6, sfx: 'rocket', vs: { swordsman: 1.3, hero: 1.1, mage: 1.2, priest: 1.2, archer: 1.2, dragon: 0.4, catapult: 1, supply: 1.3 } },
       ],
     },
+    fantasy_cart: {
+      name: '荷馬車', short: '馬', hp: 12, move: 5, defense: 0, cost: 12, fuel: 15, domain: 'ground', category: 'cart', model: '', canCapture: false, transport: true, moveSfx: 'hoof',
+      weapons: [],
+    },
     fantasy_dragon: {
-      name: 'ドラゴン', short: '竜', hp: 20, move: 7, defense: 3, cost: 45, fuel: 14, domain: 'air', category: 'dragon', model: '', canCapture: false, moveSfx: 'wing',
+      name: 'ドラゴン', short: '竜', hp: 20, move: 7, defense: 3, cost: 45, fuel: 14, domain: 'air', category: 'dragon', model: '', canCapture: false, fighter: true, moveSfx: 'wing',
       weapons: [
         { name: '炎のブレス', power: 9, minRange: 1, range: 1, ammo: 4, sfx: 'fire', vs: { swordsman: 1.4, archer: 1.3, mage: 1.2, priest: 1.2, hero: 0.9, dragon: 1, supply: 1.3 } },
         { name: '爪', power: 6, minRange: 1, range: 1, ammo: -1, sfx: 'sword', vs: { archer: 1.2, mage: 1.2, swordsman: 1, hero: 0.7, dragon: 0.8 } },
@@ -201,6 +209,10 @@ const SENGOKU: Theme = {
         { name: '名刀', power: 9, minRange: 1, range: 1, ammo: -1, sfx: 'sword', vs: { ashigaru: 1.3, archer: 1.3, gunner: 1.2, cavalry: 1.1, warlord: 1, supply: 1.3 } },
       ],
     },
+    sengoku_cart: {
+      name: '荷車', short: '車', hp: 12, move: 5, defense: 0, cost: 12, fuel: 15, domain: 'ground', category: 'cart', model: '', canCapture: false, transport: true, moveSfx: 'wheel',
+      weapons: [],
+    },
     sengoku_cannon: {
       name: '大筒隊', short: '筒', hp: 11, move: 2, defense: 1, cost: 30, fuel: 6, domain: 'ground', category: 'cannon', model: '', canCapture: false, moveSfx: 'wheel',
       weapons: [
@@ -248,7 +260,7 @@ const ROBOT: Theme = {
       ],
     },
     robot_battleship: {
-      name: '宇宙戦艦', short: '艦', hp: 40, move: 5, defense: 4, cost: 80, fuel: 15, domain: 'air', category: 'battleship', model: '', canCapture: false, moveSfx: 'engine',
+      name: '宇宙戦艦', short: '艦', hp: 40, move: 5, defense: 4, cost: 80, fuel: 15, domain: 'air', category: 'battleship', model: '', canCapture: false, fighter: true, moveSfx: 'engine',
       weapons: [
         { name: '主砲', power: 11, minRange: 2, range: 3, ammo: 8, sfx: 'beam', vs: { heavy: 1.3, ms: 1.2, aa: 1.3, battleship: 1, pod: 0.7, supply: 1.3 } },
         { name: '副砲', power: 7, minRange: 1, range: 2, ammo: -1, sfx: 'cannon', vs: { ms: 1, pod: 1.1, heavy: 0.9, supply: 1.1 } },
@@ -259,6 +271,10 @@ const ROBOT: Theme = {
       weapons: [
         { name: 'ビーム砲', power: 6, minRange: 1, range: 1, ammo: 6, sfx: 'beam', vs: { ms: 1.2, heavy: 1.1, battleship: 1, pod: 1, aa: 0.8, supply: 1.1 } },
       ],
+    },
+    robot_transport: {
+      name: '輸送車両', short: '輸', hp: 14, move: 6, defense: 1, cost: 16, fuel: 18, domain: 'ground', category: 'transport', model: '', canCapture: false, transport: true, moveSfx: 'engine',
+      weapons: [],
     },
     robot_sniper: {
       name: '狙撃モビルスーツ', short: '狙', hp: 14, move: 4, defense: 2, cost: 38, fuel: 12, domain: 'ground', category: 'sniper', model: '', canCapture: false, moveSfx: 'mech',

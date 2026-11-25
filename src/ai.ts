@@ -42,7 +42,7 @@ export function enemyAct(g: Game, u: Unit): void {
     }
   }
   const def = g.defs[u.kind];
-  const foes = liveUnits(g, 'p');
+  const foes = liveUnits(g, 'p').filter((f) => !f.carriedBy); // 搭乗中の歩兵は狙えない
   const pCap = capitalOf(g, 'p');
   const target: Cube | null =
     [...foes].sort((a, b) => distance(u, a) - distance(u, b))[0] ?? pCap;

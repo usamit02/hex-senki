@@ -25,8 +25,10 @@ export interface SaveData {
     fuel: number;
     moved: boolean;
     acted: boolean;
+    carriedBy?: number | null;
   }>;
   towns: Array<{ hexId: number; owner: Side | null }>;
+  airports?: Array<{ hexId: number; owner: Side | null }>;
 }
 
 export interface SaveEntry {
@@ -54,13 +56,14 @@ function writeSaves(entries: SaveEntry[]): void {
 export function makeSaveData(g: Game): SaveData {
   const tileByCube = new Map<string, { col: number; row: number }>();
   for (const t of g.tiles.values()) tileByCube.set(key(t), t);
+  const aliveUnits = g.units.filter((u) => u.hp > 0);
+  const indexOf = new Map(aliveUnits.map((u, i) => [u, i] as const));
   return {
     version: 1,
     settings: { ...g.settings },
     turn: g.turn,
     gold: { ...g.gold },
-    units: g.units
-      .filter((u) => u.hp > 0)
+    units: aliveUnits
       .map((u) => {
         const t = tileByCube.get(key(u));
         return {
@@ -73,9 +76,11 @@ export function makeSaveData(g: Game): SaveData {
           fuel: u.fuel,
           moved: u.moved,
           acted: u.acted,
+          carriedBy: u.carriedBy ? (indexOf.get(u.carriedBy) ?? null) : null,
         };
       }),
     towns: g.towns.map((t) => ({ hexId: t.hexId, owner: t.owner })),
+    airports: g.airports.map((a) => ({ hexId: a.hexId, owner: a.owner })),
   };
 }
 
@@ -109,10 +114,15 @@ export function applySave(g: Game, data: SaveData): void {
       x: c.x, y: c.y, z: c.z,
       side: su.side, kind: su.kind, hp: Math.min(su.hp, def.hp),
       ammo: { ...su.ammo }, fuel: Math.min(su.fuel, def.fuel),
-      moved: su.moved, acted: su.acted, from: null,
+      moved: su.moved, acted: su.acted, carriedBy: null, from: null,
     });
   }
   g.units = units;
+  // 搭乗関係を復元する(保存時のユニット配列のインデックスで結ぶ)
+  units.forEach((u, i) => {
+    const ci = data.units[i]?.carriedBy;
+    if (ci !== null && ci !== undefined && units[ci]) u.carriedBy = units[ci];
+  });
   for (const st of data.towns) {
     const town = g.towns.find((t) => t.hexId === st.hexId);
     if (town) {
@@ -120,6 +130,10 @@ export function applySave(g: Game, data: SaveData): void {
       const tile = g.tilesById.get(st.hexId);
       if (tile?.city) tile.city.owner = st.owner;
     }
+  }
+  for (const sa of data.airports ?? []) {
+    const airport = g.airports.find((a) => a.hexId === sa.hexId);
+    if (airport) airport.owner = sa.owner;
   }
   g.selected = null;
   g.selectedHex = null;

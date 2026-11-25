@@ -50,6 +50,10 @@ export interface Renderer {
   fitView(): void;
   /** 交戦アニメーション(両ユニットの中間に数秒表示) */
   playBattleFx(a: Cube, d: Cube): void;
+  /** 全滅時の爆発アニメーション */
+  playExplosion(at: Cube): void;
+  /** 占領時の旗立てアニメーション */
+  playCaptureFx(at: Cube, side: 'p' | 'e'): void;
   /** メイン画面の表示範囲(ワールド座標) */
   getViewport(): { x: number; y: number; w: number; h: number } | null;
   /** ワールド座標の中心へスクロールする(ミニマップ用) */
@@ -111,6 +115,9 @@ class BoardScene extends Phaser.Scene {
   private gameRef: Game | null = null;
   private cb: BoardCallbacks | null = null;
   private tileLayer!: Phaser.GameObjects.Container;
+  /** HP数字の DOM オーバーレイ(3Dモデルより手前に全ユニット分表示する) */
+  private hpLayer: HTMLDivElement | null = null;
+  private hpLabels = new Map<object, HTMLDivElement>();
   /** fill を除いた実ヘックスのピクセル範囲(カメラ制限・全体図に使う) */
   private realBounds = { x: 0, y: 0, w: 0, h: 0 };
   private minZoom = 0.05;
@@ -143,7 +150,7 @@ class BoardScene extends Phaser.Scene {
     const wv = cam.worldView;
     const out: UnitView[] = [];
     for (const u of g.units) {
-      if (u.hp <= 0) continue;
+      if (u.hp <= 0 || u.carriedBy) continue; // 搭乗中の歩兵は盤面に描かない(3D側で小さく重ねる)
       const p = toPixel(u, HEX_SIZE);
       out.push({ unit: u, x: (p.x - wv.x) * cam.zoom, y: (p.y - wv.y) * cam.zoom, size: HEX_SIZE * cam.zoom });
     }
@@ -257,6 +264,48 @@ class BoardScene extends Phaser.Scene {
     this.cameras.main.shake(130, 0.0016);
   }
 
+  /** 全滅時の爆発アニメーション */
+  playExplosion(at: Cube): void {
+    const { x, y } = toPixel(at, HEX_SIZE);
+    const fx = this.add.container(x, y).setDepth(9);
+    const gr = this.add.graphics();
+    gr.fillStyle(0xffdf80, 1);
+    gr.fillCircle(0, 0, HEX_SIZE * 0.3);
+    gr.fillStyle(0xff8c2e, 0.9);
+    gr.fillCircle(0, 0, HEX_SIZE * 0.48);
+    gr.fillStyle(0xd23c28, 0.75);
+    gr.fillCircle(0, 0, HEX_SIZE * 0.66);
+    fx.add(gr);
+    this.tweens.add({
+      targets: fx, scale: 2.1, alpha: 0, duration: 750, ease: 'Quad.easeOut',
+      onComplete: () => fx.destroy(),
+    });
+    this.cameras.main.shake(220, 0.003);
+  }
+
+  /** 占領時の旗立てアニメーション(旗が上がる) */
+  playCaptureFx(at: Cube, side: 'p' | 'e'): void {
+    const { x, y } = toPixel(at, HEX_SIZE);
+    const color = side === 'p' ? 0x2b6fd2 : 0xd23b2e;
+    const fx = this.add.container(x, y).setDepth(9);
+    const gr = this.add.graphics();
+    gr.lineStyle(4, 0xe8e8e8, 1);
+    gr.lineBetween(0, HEX_SIZE * 0.42, 0, -HEX_SIZE * 0.5);
+    gr.fillStyle(color, 1);
+    gr.fillTriangle(0, -HEX_SIZE * 0.5, 0, -HEX_SIZE * 0.18, HEX_SIZE * 0.42, -HEX_SIZE * 0.34);
+    gr.fillStyle(0xffffff, 1);
+    gr.fillCircle(0, -HEX_SIZE * 0.5, 3);
+    fx.add(gr);
+    fx.setScale(1, 0);
+    fx.setAlpha(0.4);
+    this.tweens.add({
+      targets: fx, scaleY: 1, alpha: 1, duration: 650, ease: 'Back.easeOut',
+      onComplete: () => {
+        this.tweens.add({ targets: fx, alpha: 0, duration: 500, delay: 700, onComplete: () => fx.destroy() });
+      },
+    });
+  }
+
   getViewport(): { x: number; y: number; w: number; h: number } {
     const wv = this.cameras.main.worldView;
     return { x: wv.x, y: wv.y, w: wv.width, h: wv.height };
@@ -268,6 +317,43 @@ class BoardScene extends Phaser.Scene {
       Phaser.Math.Clamp(x, b.x, b.x + b.w),
       Phaser.Math.Clamp(y, b.y, b.y + b.h),
     );
+  }
+
+  /** HP数字ラベルを各ユニットの画面位置に合わせる(毎フレーム) */
+  private updateHpLabels(): void {
+    const g = this.gameRef;
+    if (!g || !this.hpLayer) return;
+    const cam = this.cameras.main;
+    const wv = cam.worldView;
+    const fontPx = Math.max(8, Math.min(20, Math.round(19 * cam.zoom)));
+    const alive = new Set<object>();
+    for (const u of g.units) {
+      if (u.hp <= 0 || u.carriedBy) continue; // 搭乗中の歩兵は盤面に描かない(3D側で小さく重ねる)
+      alive.add(u);
+      let label = this.hpLabels.get(u);
+      if (!label) {
+        label = document.createElement('div');
+        label.className = 'hp-label';
+        this.hpLayer.appendChild(label);
+        this.hpLabels.set(u, label);
+      }
+      const p = toPixel(u, HEX_SIZE);
+      const sx = (p.x - wv.x) * cam.zoom + HEX_SIZE * 0.58 * cam.zoom;
+      const sy = (p.y - wv.y) * cam.zoom + HEX_SIZE * 0.60 * cam.zoom;
+      label.style.transform = `translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px) translate(-50%, -50%)`;
+      label.style.fontSize = `${fontPx}px`;
+      const text = String(u.hp);
+      if (label.textContent !== text) label.textContent = text;
+      const ratio = u.hp / g.defs[u.kind].hp;
+      const cls = ratio <= 0.2 ? 'hp-label danger' : ratio <= 0.5 ? 'hp-label warn' : 'hp-label';
+      if (label.className !== cls) label.className = cls;
+    }
+    for (const [unit, label] of this.hpLabels) {
+      if (!alive.has(unit)) {
+        label.remove();
+        this.hpLabels.delete(unit);
+      }
+    }
   }
 
   /** 実ヘックスのピクセル範囲(全体図用) */
@@ -292,6 +378,12 @@ class BoardScene extends Phaser.Scene {
     this.gameRef = boardBridge.game;
     this.cb = boardBridge.cb;
     boardBridge.scene = this;
+    // HP数字レイヤーは body 直下に置く(#game-container の中だと 3Dモデル用レイヤーの下に隠れるため)
+    if (!this.hpLayer) {
+      this.hpLayer = document.createElement('div');
+      this.hpLayer.className = 'hp-layer';
+      document.body.appendChild(this.hpLayer);
+    }
     this.input.mouse?.disableContextMenu();
     this.tileLayer = this.add.container(0, 0).setDepth(0);
     this.gTerrain = this.add.graphics().setDepth(1);
@@ -367,6 +459,7 @@ class BoardScene extends Phaser.Scene {
 
   update(): void {
     const cam = this.cameras.main;
+    this.updateHpLabels();
     const speed = 14 / cam.zoom;
     if (this.cursors && this.wasd) {
       if (this.cursors.left.isDown || this.wasd.A.isDown) cam.scrollX -= speed;
@@ -494,6 +587,14 @@ class BoardScene extends Phaser.Scene {
       }).setOrigin(0.5, 0).setDepth(3);
       this.townLabels.push(label);
     }
+    for (const airport of g.airports) {
+      const { x, y } = toPixel(airport.at, size);
+      const label = this.add.text(x, y + size * 0.48, airport.name, {
+        fontSize: '11px', color: '#bfe9ff',
+        backgroundColor: 'rgba(20,26,34,0.55)', padding: { x: 3, y: 1 },
+      }).setOrigin(0.5, 0).setDepth(3);
+      this.townLabels.push(label);
+    }
     this.labelsVisible = this.cameras.main.zoom >= 0.55;
     for (const t of this.townLabels) t.setVisible(this.labelsVisible);
   }
@@ -511,15 +612,56 @@ class BoardScene extends Phaser.Scene {
       const ring = town.owner === 'p' ? player : town.owner === 'e' ? enemy : NEUTRAL;
       gtw.lineStyle(town.capital ? 4 : 2, ring, 1);
       gtw.strokeCircle(x, y, size * 0.44);
-      // ビル群アイコン
+      // 人口でアイコンを描き分ける: 10万人以上=city(高層ビル群)、1万人以上=town(中層ビル)、それ以下=village(家)
+      if (town.population >= 100000) {
+        gtw.fillStyle(0x2f3b4c, 1);
+        gtw.fillRect(x - size * 0.36, y - size * 0.02, size * 0.2, size * 0.32);
+        gtw.fillRect(x - size * 0.11, y - size * 0.34, size * 0.26, size * 0.64);
+        gtw.fillRect(x + size * 0.2, y - size * 0.14, size * 0.18, size * 0.44);
+        gtw.fillRect(x - size * 0.02, y - size * 0.44, size * 0.08, size * 0.12);
+        gtw.fillStyle(0xf5d76e, 1);
+        gtw.fillRect(x - size * 0.04, y - size * 0.22, size * 0.05, size * 0.07);
+        gtw.fillRect(x + size * 0.05, y - size * 0.1, size * 0.05, size * 0.07);
+        gtw.fillRect(x - size * 0.29, y + size * 0.06, size * 0.05, size * 0.07);
+        gtw.fillRect(x + size * 0.25, y - size * 0.04, size * 0.05, size * 0.07);
+      } else if (town.population >= 10000) {
+        gtw.fillStyle(0x3a4a5c, 1);
+        gtw.fillRect(x - size * 0.3, y - size * 0.1, size * 0.26, size * 0.4);
+        gtw.fillRect(x + size * 0.02, y + size * 0.0, size * 0.24, size * 0.3);
+        gtw.fillRect(x - size * 0.32, y - size * 0.16, size * 0.62, size * 0.07);
+        gtw.fillStyle(0xf5d76e, 1);
+        gtw.fillRect(x - size * 0.2, y - size * 0.02, size * 0.05, size * 0.07);
+        gtw.fillRect(x + size * 0.1, y + size * 0.08, size * 0.05, size * 0.07);
+      } else {
+        // village: 屋根のある小さな家を2軒
+        gtw.fillStyle(0x6b4a2f, 1);
+        gtw.fillTriangle(x - size * 0.3, y + size * 0.02, x - size * 0.05, y + size * 0.02, x - size * 0.175, y - size * 0.14);
+        gtw.fillTriangle(x + size * 0.04, y + size * 0.1, x + size * 0.27, y + size * 0.1, x + size * 0.155, y - size * 0.03);
+        gtw.fillStyle(0xd8cfc0, 1);
+        gtw.fillRect(x - size * 0.26, y + size * 0.02, size * 0.17, size * 0.2);
+        gtw.fillRect(x + size * 0.07, y + size * 0.1, size * 0.17, size * 0.18);
+        gtw.fillStyle(0x6b4a2f, 1);
+        gtw.fillRect(x - size * 0.2, y + size * 0.1, size * 0.06, size * 0.12);
+      }
+    }
+    // 空港: 滑走路+管制塔のアイコンと所有リング(towns と同じ流儀)
+    for (const airport of g.airports) {
+      const { x, y } = toPixel(airport.at, size);
+      const ring = airport.owner === 'p' ? player : airport.owner === 'e' ? enemy : NEUTRAL;
+      gtw.lineStyle(2, ring, 1);
+      gtw.strokeCircle(x, y, size * 0.44);
+      // 滑走路
+      gtw.fillStyle(0x3c4652, 1);
+      gtw.fillRect(x - size * 0.46, y + size * 0.1, size * 0.92, size * 0.2);
+      gtw.lineStyle(2, 0xffffff, 0.9);
+      for (let d = -0.3; d <= 0.3; d += 0.15) {
+        gtw.lineBetween(x + size * d - size * 0.04, y + size * 0.2, x + size * d + size * 0.04, y + size * 0.2);
+      }
+      // 管制塔
       gtw.fillStyle(0x2f3b4c, 1);
-      gtw.fillRect(x - size * 0.34, y - size * 0.05, size * 0.2, size * 0.34);
-      gtw.fillRect(x - size * 0.1, y - size * 0.3, size * 0.26, size * 0.59);
-      gtw.fillRect(x + size * 0.2, y - size * 0.12, size * 0.18, size * 0.41);
-      gtw.fillStyle(0xf5d76e, 1);
-      gtw.fillRect(x - size * 0.04, y - size * 0.2, size * 0.05, size * 0.07);
-      gtw.fillRect(x + size * 0.05, y - size * 0.08, size * 0.05, size * 0.07);
-      gtw.fillRect(x - size * 0.28, y + size * 0.05, size * 0.05, size * 0.07);
+      gtw.fillRect(x - size * 0.05, y - size * 0.34, size * 0.1, size * 0.42);
+      gtw.fillStyle(0x7fc8e8, 1);
+      gtw.fillRect(x - size * 0.13, y - size * 0.44, size * 0.26, size * 0.12);
     }
   }
 
@@ -570,7 +712,7 @@ class BoardScene extends Phaser.Scene {
     const player = hexToInt(cs.getPropertyValue('--pl').trim() || '#1f6fb5');
     const enemy = hexToInt(cs.getPropertyValue('--en').trim() || '#c2392f');
     for (const u of g.units) {
-      if (u.hp <= 0) continue;
+      if (u.hp <= 0 || u.carriedBy) continue; // 搭乗中の歩兵は盤面に描かない(3D側で小さく重ねる)
       const { x, y } = toPixel(u, size);
       const c = this.add.container(x, y);
       const circle = this.add.graphics();
@@ -586,17 +728,13 @@ class BoardScene extends Phaser.Scene {
         circle.lineStyle(3, 0xffffff, 1);
         circle.strokeCircle(0, 0, size * 0.52);
       }
-      const hp = this.add.text(size * 0.55, size * 0.5, String(u.hp), {
-        fontSize: `${Math.round(size * 0.32)}px`, color: '#ffffff', fontStyle: 'bold',
-        backgroundColor: 'rgba(20,26,34,0.55)', padding: { x: 2, y: 0 },
-      }).setOrigin(0.5);
-      if (useModel) {
-        c.add([circle, hp]);
-      } else {
+      if (!useModel) {
         const name = this.add.text(0, -1, g.defs[u.kind].short, {
           fontSize: `${Math.round(size * 0.5)}px`, color: '#ffffff', fontStyle: 'bold',
         }).setOrigin(0.5);
-        c.add([circle, name, hp]);
+        c.add([circle, name]);
+      } else {
+        c.add([circle]);
       }
       if (u.side === 'p' && u.moved && u.acted) c.setAlpha(0.45);
       this.unitLayer.add(c);
@@ -638,6 +776,12 @@ export function createRenderer(parent: HTMLElement): Renderer {
     },
     playBattleFx(a, d) {
       boardBridge.scene?.playBattleFx(a, d);
+    },
+    playExplosion(at) {
+      boardBridge.scene?.playExplosion(at);
+    },
+    playCaptureFx(at, side) {
+      boardBridge.scene?.playCaptureFx(at, side);
     },
     getViewport() {
       return boardBridge.scene ? boardBridge.scene.getViewport() : null;

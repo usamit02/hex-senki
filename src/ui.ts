@@ -32,6 +32,8 @@ export interface Hud {
   showContext(x: number, y: number, infoHtml: string, actions: ContextAction[]): void;
   hideContext(): void;
   showInfo(html: string): void;
+  /** 戦闘結果ポップアップ(数秒でフェードアウト) */
+  showBattlePopup(html: string): void;
   /** 指定したペインを開く(他は閉じる) */
   openPane(side: PaneSide): void;
   /** ミニマップ全体図を描き直す(地形・town・ユニット・表示範囲の赤枠) */
@@ -64,8 +66,15 @@ export function createHud(handlers: HudHandlers): Hud {
   fitView.onclick = handlers.onFitView;
 
   const paneIds: Record<PaneSide, string> = { left: 'pane-left', right: 'pane-right', bottom: 'pane-bottom', top: 'pane-top' };
+  // ピン留め(出しっぱなし)中のペインは、他のペインを開いても閉じない
+  const pinnedPanes = new Set<PaneSide>();
+  const closeOthers = (except: PaneSide): void => {
+    (Object.keys(paneIds) as PaneSide[]).forEach((s2) => {
+      if (s2 !== except && !pinnedPanes.has(s2)) el(paneIds[s2]).classList.remove('open');
+    });
+  };
   const openPane = (side: PaneSide): void => {
-    for (const id of Object.values(paneIds)) el(id).classList.remove('open');
+    closeOthers(side);
     el(paneIds[side]).classList.add('open');
   };
   const tabs: Array<[string, PaneSide]> = [
@@ -77,14 +86,50 @@ export function createHud(handlers: HudHandlers): Hud {
   for (const [tabId, side] of tabs) {
     el(tabId).addEventListener('click', () => {
       const pane = el(paneIds[side]);
-      const willOpen = !pane.classList.contains('open');
-      for (const id of Object.values(paneIds)) el(id).classList.remove('open');
-      if (willOpen) pane.classList.add('open');
+      const isOpen = pane.classList.contains('open');
+      if (isOpen) {
+        if (!pinnedPanes.has(side)) pane.classList.remove('open');
+      } else {
+        closeOthers(side);
+        pane.classList.add('open');
+      }
     });
   }
+  // ピンボタン: 出しっぱなしの切り替え
+  document.querySelectorAll<HTMLButtonElement>('.pin-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const side = btn.dataset.pin as PaneSide;
+      const pane = el(paneIds[side]);
+      if (pinnedPanes.has(side)) {
+        pinnedPanes.delete(side);
+        pane.classList.remove('pinned');
+      } else {
+        pinnedPanes.add(side);
+        pane.classList.add('pinned', 'open');
+      }
+    });
+  });
 
   const minimap = el<HTMLCanvasElement>('minimap');
   const unitTable = el('unit-table');
+  // 部隊表の絞込(未行動のみ)と「次部隊」ボタン
+  let unactedOnly = false;
+  let lastGame: Game | null = null;
+  const btnUnacted = el<HTMLButtonElement>('btn-unacted');
+  const btnNext = el<HTMLButtonElement>('btn-next-unit');
+  btnUnacted.onclick = () => {
+    unactedOnly = !unactedOnly;
+    btnUnacted.classList.toggle('active', unactedOnly);
+    if (lastGame) hudRef.update(lastGame);
+  };
+  btnNext.onclick = () => {
+    if (!lastGame) return;
+    const g = lastGame;
+    const ready = g.units.filter((u) => u.side === 'p' && u.hp > 0 && !u.carriedBy && !u.acted);
+    if (ready.length === 0) return;
+    const idx = g.selected ? ready.indexOf(g.selected) : -1;
+    handlers.onSelectUnit(ready[(idx + 1) % ready.length]);
+  };
   let minimapDrag = false;
   const minimapPan = (e: PointerEvent): void => {
     const r = minimap.getBoundingClientRect();
@@ -115,7 +160,8 @@ export function createHud(handlers: HudHandlers): Hud {
     if (e.key === 'Escape') hideContext();
   });
 
-  return {
+  let hudRef: Hud;
+  hudRef = {
     setup(g) {
       produceBox.replaceChildren();
       produceButtons.clear();
@@ -141,6 +187,7 @@ export function createHud(handlers: HudHandlers): Hud {
       }
     },
     update(g) {
+      lastGame = g;
       turnLabel.textContent = `ターン ${g.turn}`;
       goldLabel.textContent = `資金 ${g.gold.p}(+${income(g, 'p')}) / 部隊 ${liveUnits(g, 'p').length}/${MAX_UNITS_PER_SIDE}`;
       message.textContent = g.message;
@@ -157,11 +204,12 @@ export function createHud(handlers: HudHandlers): Hud {
       endTurn.disabled = g.busy || g.over;
       // 部隊表(上ペイン)
       unitTable.replaceChildren();
-      const mine = g.units.filter((u) => u.side === 'p' && u.hp > 0);
+      const mineAll = g.units.filter((u) => u.side === 'p' && u.hp > 0);
+      const mine = unactedOnly ? mineAll.filter((u) => !u.acted) : mineAll;
       const foes = g.units.filter((u) => u.side === 'e' && u.hp > 0);
       const head = document.createElement('div');
       head.className = 'unit-row';
-      head.textContent = `味方 ${mine.length} 部隊 / 敵 ${foes.length} 部隊(クリックで選択)`;
+      head.textContent = `味方 ${mine.length} 部隊${unactedOnly ? '(未行動のみ)' : ''} / 敵 ${foes.length} 部隊(クリックで選択)`;
       unitTable.append(head);
       for (const u of mine) {
         const def = g.defs[u.kind];
@@ -173,10 +221,23 @@ export function createHud(handlers: HudHandlers): Hud {
           .filter((w) => g.settings.supply && w.ammo >= 0)
           .map((w) => `${w.name}:${u.ammo[w.name] ?? 0}`)
           .join(' ');
-        b.textContent = `${def.name} HP${u.hp}/${def.hp} 燃料${u.fuel}/${def.fuel}${ammoText ? ` ${ammoText}` : ''} @${tile ? `${tile.col},${tile.row}` : '?'} ${u.acted ? '行動済' : '未行動'}`;
-        b.onclick = () => handlers.onSelectUnit(u);
+        b.textContent = `${def.name} HP${u.hp}/${def.hp} 燃料${u.fuel}/${def.fuel}${ammoText ? ` ${ammoText}` : ''} @${tile ? `${tile.col},${tile.row}` : '?'} ${u.carriedBy ? '(搭乗中)' : u.acted ? '行動済' : '未行動'}`;
+        b.onclick = () => handlers.onSelectUnit(u.carriedBy ?? u);
         unitTable.append(b);
       }
+      // 状況表(上ペイン・部隊表の横): 陣営ごとの占領都市数・人口・ユニット数(種別ごと)
+      const situation = el('situation');
+      const sideRow = (side: 'p' | 'e', label: string): string => {
+        const towns = g.towns.filter((t) => t.owner === side);
+        const pop = towns.reduce((sum, t) => sum + t.population, 0);
+        const airports = g.airports.filter((a) => a.owner === side).length;
+        const units = g.units.filter((u) => u.side === side && u.hp > 0);
+        const byKind = new Map<string, number>();
+        for (const u of units) byKind.set(u.kind, (byKind.get(u.kind) ?? 0) + 1);
+        const kinds = [...byKind.entries()].map(([k, n]) => `${g.defs[k].name}×${n}`).join('、') || 'なし';
+        return `<tr><th>${label}</th><td>都市 ${towns.length} / 人口 ${pop.toLocaleString('ja-JP')} / 空港 ${airports}<br>ユニット ${units.length}: ${kinds}</td></tr>`;
+      };
+      situation.innerHTML = `<table>${sideRow('p', '味方')}${sideRow('e', '敵')}</table>`;
     },
     showError(text) {
       message.textContent = text;
@@ -205,6 +266,14 @@ export function createHud(handlers: HudHandlers): Hud {
       ctx.style.top = `${Math.max(4, Math.min(y, window.innerHeight - h - 8))}px`;
     },
     hideContext,
+    showBattlePopup(html) {
+      const popup = el('battle-popup');
+      popup.innerHTML = html;
+      popup.hidden = false;
+      popup.classList.remove('show');
+      void popup.offsetWidth; // アニメーションを最初から再生する
+      popup.classList.add('show');
+    },
     showInfo(html) {
       info.innerHTML = html;
     },
@@ -238,6 +307,10 @@ export function createHud(handlers: HudHandlers): Hud {
         c.fillStyle = theme.palette[t.terrain];
         c.fillRect((t.col - minCol) * cw, (t.row - minRow) * ch, Math.ceil(cw), Math.ceil(ch));
       }
+      for (const airport of g.airports) {
+        c.fillStyle = airport.owner === 'p' ? '#3f8fe0' : airport.owner === 'e' ? '#e0483f' : '#bfe9ff';
+        c.fillRect((airport.col - minCol) * cw - 1, (airport.row - minRow) * ch - 1, Math.max(3, cw + 2), Math.max(3, ch + 2));
+      }
       for (const town of g.towns) {
         c.fillStyle = town.owner === 'p' ? '#3f8fe0' : town.owner === 'e' ? '#e0483f' : '#e8e8e8';
         c.beginPath();
@@ -263,4 +336,5 @@ export function createHud(handlers: HudHandlers): Hud {
       }
     },
   };
+  return hudRef;
 }

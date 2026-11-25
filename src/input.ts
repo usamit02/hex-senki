@@ -1,5 +1,5 @@
-import { key } from './hex';
-import { attack, confirmUnit, inRange, moveUnit, reachable, resupplyFromAdjacentSupply, undoMove } from './rules';
+import { distance, key } from './hex';
+import { attack, boardUnit, canBoard, cargoOf, confirmUnit, disembarkUnit, inRange, moveCostOf, moveUnit, reachable, resupplyFromAdjacentSupply, undoMove } from './rules';
 import { INCOME_POPULATION_UNIT, linesAt, producibleHexKeys, tileAt, townAt, unitAt } from './state';
 import { TERRAINS } from './terrain';
 import { getTheme } from './themes';
@@ -55,6 +55,35 @@ export function handleHexClick({ getGame, refresh }: InputDeps, h: Cube): void {
       g.reach = null;
       refresh();
       return;
+    }
+    // 搭乗: 歩兵を選択中に味方の輸送ユニット(トラック・ヘリ)をクリックしたら搭乗する。
+    // 輸送側の行動前後は問わないが、歩兵の移動範囲内であることが条件
+    if (u && u.side === 'p' && canBoard(g, sel, u)) {
+      // 輸送ユニットを一時的に盤面から外して到達コストを測る
+      const idx = g.units.indexOf(u);
+      g.units.splice(idx, 1);
+      const reach = reachable(g, sel);
+      g.units.splice(idx, 0, u);
+      const cost = reach.get(key(t));
+      if (cost !== undefined) {
+        boardUnit(g, sel, u, cost);
+        g.selected = null;
+        g.reach = null;
+        refresh();
+        return;
+      }
+    }
+    // 降車: 輸送ユニットを選択中に、隣の空きヘックスをクリックしたら歩兵を降ろす(輸送側の行動前後は問わない)
+    if (!u) {
+      const cargo = cargoOf(g, sel);
+      if (cargo && distance(sel, t) === 1 && moveCostOf(g, cargo, t) < Infinity) {
+        if (disembarkUnit(g, sel, t)) {
+          g.selected = null;
+          g.reach = null;
+          refresh();
+          return;
+        }
+      }
     }
   }
 
@@ -115,6 +144,8 @@ export function describeHex(g: Game, t: Tile): string {
   }
   const terrain = TERRAINS[t.terrain];
   lines.push(`地形: ${terrain.label}(地上の移動コスト ${terrain.moveCost === Infinity ? '通行不可' : terrain.moveCost} / 地上の防御 +${terrain.defense}、航空は地形無視)`);
+  const airport = g.airports.find((a) => a.hexId === t.id);
+  if (airport) lines.push(`空港「${airport.name}」: 所有 ${airport.owner === 'p' ? '味方' : airport.owner === 'e' ? '敵' : 'なし'}。戦闘機の生産・補充・補給が可能(ヘリも可)${town ? '(townと同一ヘックスのため空港としては扱わない)' : ''}`);
   if (t.hasRoad && t.hasRiver) lines.push('橋: 道路と河川が重なるため移動コスト1');
   else if (t.hasRoad) lines.push('道路あり: 移動コスト1');
   else if (t.hasRiver) lines.push('河川あり: 地上は移動不可(コスト255)');
@@ -133,6 +164,11 @@ export function describeHex(g: Game, t: Tile): string {
 
 /** ユニット情報(左ペイン表示用)。武装と残弾も出す */
 export function describeUnit(g: Game, u: Unit): string {
+  const cargo = cargoOf(g, u);
+  const extra: string[] = [];
+  if (u.carriedBy) extra.push(`${g.defs[u.carriedBy.kind].name}に搭乗中`);
+  if (cargo) extra.push(`${g.defs[cargo.kind].name}が搭乗中(隣の空きマスをクリックで降車)`);
+  else if (g.defs[u.kind].transport) extra.push('歩兵を搭乗させられる(歩兵がクリック)');
   const def = g.defs[u.kind];
   const t = tileAt(g, u);
   const theme = getTheme(g.settings.theme);
@@ -142,6 +178,7 @@ export function describeUnit(g: Game, u: Unit): string {
     `位置: col ${t?.col ?? '?'} / row ${t?.row ?? '?'}(${t ? theme.terrainLabels[t.terrain] : '?'})`,
     `状態: ${u.acted ? '行動済み' : u.moved ? '移動済み(攻撃・確定が可能)' : '未行動'}`,
   ];
+  for (const e of extra) lines.push(e);
   if (def.canCapture) lines.push('このユニットは town を占領できます。');
   if (def.isSupply) lines.push('補給ユニット: 隣接する味方の残弾・燃料を回復します。');
   if (def.weapons.length === 0) {

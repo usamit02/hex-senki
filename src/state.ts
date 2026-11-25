@@ -7,6 +7,7 @@ import {
   DEFAULT_SETTINGS,
   type Cube,
   type Game,
+  type Airport,
   type GameSettings,
   type LineData,
   type LineFeature,
@@ -30,7 +31,7 @@ export const CITY_INCOME = 3;
 export const tileAt = (g: Game, c: Cube): Tile | undefined => g.tiles.get(key(c));
 
 export const unitAt = (g: Game, c: Cube): Unit | undefined =>
-  g.units.find((u) => u.hp > 0 && equals(u, c));
+  g.units.find((u) => u.hp > 0 && !u.carriedBy && equals(u, c));
 
 export const liveUnits = (g: Game, side: Side): Unit[] =>
   g.units.filter((u) => u.hp > 0 && u.side === side);
@@ -77,11 +78,19 @@ export function refillAmmo(g: Game, u: Unit): void {
 /** 占領済み town 上にいる自軍ユニットは、HPと残弾・燃料が全回復する */
 export function resupplyOnOwnedTowns(g: Game, side: Side): void {
   for (const u of liveUnits(g, side)) {
+    const def = g.defs[u.kind];
     const town = townAt(g, u);
-    if (town && town.owner === side) {
-      u.hp = g.defs[u.kind].hp;
-      refillAmmo(g, u);
-    }
+    const airport = airportAt(g, u);
+    const onOwnedTown = !!town && town.owner === side;
+    // town と同一ヘックスの空港は空港として扱わない(town優先)
+    const onOwnedAirport = !!airport && !town && airport.owner === side;
+    // 戦闘機は空港でのみ補充。その他の航空(ヘリ等)は town でも空港でも可。地上は town のみ(空港では何も起きない)
+    const canRefill = def.fighter
+      ? onOwnedAirport
+      : def.domain === 'air' ? (onOwnedTown || onOwnedAirport) : onOwnedTown;
+    if (!canRefill) continue;
+    u.hp = def.hp;
+    refillAmmo(g, u);
   }
 }
 
@@ -92,7 +101,7 @@ export const cheapestCost = (g: Game): number =>
 export function spawn(g: Game, side: Side, kind: string, at: Cube): boolean {
   if (liveUnits(g, side).length >= (g.settings?.maxUnits ?? MAX_UNITS_PER_SIDE)) return false;
   g.units.push({
-    x: at.x, y: at.y, z: at.z, side, kind, hp: g.defs[kind].hp, ammo: fullAmmo(g, kind), fuel: g.defs[kind].fuel, moved: true, acted: true, from: null,
+    x: at.x, y: at.y, z: at.z, side, kind, hp: g.defs[kind].hp, ammo: fullAmmo(g, kind), fuel: g.defs[kind].fuel, carriedBy: null, moved: true, acted: true, from: null,
   });
   return true;
 }
@@ -162,6 +171,8 @@ export function createGame(defs: UnitDefs, map: MapData, settings: GameSettings 
       geo: { x: h.center_x, y: h.center_y },
       roadScore: h.road_score,
       riverScore: h.river_score,
+      airport: false,
+      facility: false,
       hasRoad: false,
       hasRiver: false,
     };
@@ -184,6 +195,7 @@ export function createGame(defs: UnitDefs, map: MapData, settings: GameSettings 
   for (const t of map.towns) {
     const tile = tilesById.get(t.hex_id);
     if (!tile) continue;
+    tile.facility = true;
     towns.push({
       jiscode: t.jiscode,
       name: t.name,
@@ -194,6 +206,7 @@ export function createGame(defs: UnitDefs, map: MapData, settings: GameSettings 
       row: tile.row,
       owner: null,
       capital: null,
+      airport: false,
     });
   }
 
@@ -209,6 +222,16 @@ export function createGame(defs: UnitDefs, map: MapData, settings: GameSettings 
     town.capital = side;
     const tile = tilesById.get(town.hexId);
     if (tile) tile.city = { owner: side, capital: side };
+  }
+
+  // 空港: hex.json の airports(編集アプリが書き出す)から構築する
+  const airports: Airport[] = [];
+  for (const a of map.airports ?? []) {
+    const tile = tilesById.get(a.hex_id);
+    if (!tile) throw new Error(`hex.json: airports の "${a.name}" の hex_id=${a.hex_id} が hexes に見つかりません`);
+    tile.airport = true;
+    tile.facility = true;
+    airports.push({ name: a.name, hexId: a.hex_id, at: { x: tile.x, y: tile.y, z: tile.z }, col: tile.col, row: tile.row, owner: null });
   }
 
   // 旧形式 cities(互換): citys が無い場合のみ使う
@@ -229,7 +252,7 @@ export function createGame(defs: UnitDefs, map: MapData, settings: GameSettings 
       throw new Error(`map.json: ${u.side === 'p' ? 'プレイヤー' : '敵'}の部隊数が上限 ${MAX_UNITS_PER_SIDE} を超えています`);
     }
     const t = tileAtOffset(u.col, u.row);
-    return { x: t.x, y: t.y, z: t.z, side: u.side, kind: u.type, hp: def.hp, ammo: fullAmmo({ defs }, u.type), fuel: def.fuel, moved: false, acted: false, from: null };
+    return { x: t.x, y: t.y, z: t.z, side: u.side, kind: u.type, hp: def.hp, ammo: fullAmmo({ defs }, u.type), fuel: def.fuel, carriedBy: null, moved: false, acted: false, from: null };
   });
 
   // 道路・河川が描かれるヘックスのフラグ(移動コストの上書きと橋の判定に使う)
@@ -237,7 +260,7 @@ export function createGame(defs: UnitDefs, map: MapData, settings: GameSettings 
   for (const l of map.rivers) for (const id of l.path) { const t = tilesById.get(id); if (t) t.hasRiver = true; }
 
   const game: Game = {
-    defs, settings, width, height, tiles, tilesById,
+    defs, settings, width, height, tiles, tilesById, airports,
     roads: resolveLines('road', map.roads, tilesById),
     rivers: resolveLines('river', map.rivers, tilesById),
     towns,
@@ -250,6 +273,7 @@ export function createGame(defs: UnitDefs, map: MapData, settings: GameSettings 
     selected: null,
     selectedHex: null,
     reach: null,
+    pendingCapture: null,
     pinnedInfo: null,
     pendingFx: null,
     pendingMoveSfx: null,
@@ -265,6 +289,12 @@ export function linesAt(g: Game, tile: Tile): LineFeature[] {
     if (l.path.includes(tile.id)) out.push(l);
   }
   return out;
+}
+
+export function airportAt(g: Game, c: Cube): Airport | undefined {
+  const t = tileAt(g, c);
+  if (!t) return undefined;
+  return g.airports.find((a) => a.hexId === t.id);
 }
 
 export function townAt(g: Game, c: Cube): Town | undefined {

@@ -7,15 +7,15 @@ import { showSaveScreen } from './savescreen';
 import { confirmSelected, describeHex, describeUnit, handleHexClick, undoSelectedMove, type InputDeps } from './input';
 import { createRenderer, type BoardCallbacks } from './render';
 import { UnitModelLayer } from './render3d';
-import { produce, settleCaptures } from './rules';
-import { createGame, producibleHexKeys, tileAt, unitAt } from './state';
+import { canProduce, produce, settleCaptures } from './rules';
+import { createGame, tileAt, unitAt } from './state';
 import { showSettingsScreen } from './settings';
-import { playAttackSfx, playMoveSfx } from './sfx';
+import { playAttackSfx, playCaptureSfx, playExplosionSfx, playMoveSfx } from './sfx';
 import { getTheme } from './themes';
 import { validateUnitDefs } from './validate';
 import { DEFAULT_SETTINGS, type GameSettings } from './types';
 import { beginEnemyTurn, finishEnemyTurn } from './turn';
-import { key } from './hex';
+import {} from './hex';
 import type { Game, MapData, ThemeId, UnitDefs } from './types';
 import { createHud, type ContextAction } from './ui';
 
@@ -53,9 +53,31 @@ function refresh(): void {
   const g = game;
   // 交戦演出と効果音(rules が積んだイベントをここで消費する)
   if (g.pendingFx) {
-    renderer.playBattleFx(g.pendingFx.a, g.pendingFx.d);
-    playAttackSfx(g.pendingFx.sfx);
+    const fx = g.pendingFx;
+    renderer.playBattleFx(fx.a, fx.d);
+    playAttackSfx(fx.sfx);
+    // 戦闘結果ポップアップ(数秒でフェードアウト)
+    let html = `<b>${fx.aName}</b> の ${fx.weapon} → <b>${fx.dName}</b> に <b>${fx.damage}</b> ダメージ`;
+    if (fx.destroyed) html += '<br>💥 ' + fx.dName + ' を全滅させた!';
+    if (fx.counterDamage > 0) {
+      html += `<br>反撃で <b>${fx.counterDamage}</b> ダメージを受けた`;
+      if (fx.counterDestroyed) html += '<br>💥 ' + fx.aName + ' が全滅した…';
+    }
+    hud.showBattlePopup(html);
+    if (fx.destroyed) {
+      renderer.playExplosion(fx.d);
+      playExplosionSfx();
+    }
+    if (fx.counterDestroyed) {
+      renderer.playExplosion(fx.a);
+      playExplosionSfx();
+    }
     g.pendingFx = null;
+  }
+  if (g.pendingCapture) {
+    renderer.playCaptureFx(g.pendingCapture.at, g.pendingCapture.side);
+    playCaptureSfx();
+    g.pendingCapture = null;
   }
   if (g.pendingMoveSfx) {
     playMoveSfx(g.pendingMoveSfx);
@@ -64,9 +86,10 @@ function refresh(): void {
   renderer.draw(g);
   hud.update(g);
   // 左ペイン: 右クリックで固定した情報 > ユニット情報 > 選択中ヘックスの情報
+  const selectedTile = g.selected ? tileAt(g, g.selected) : undefined;
   const infoHtml = g.pinnedInfo
     ?? (g.selected
-      ? describeUnit(g, g.selected)
+      ? describeUnit(g, g.selected) + (selectedTile ? `<hr>${describeHex(g, selectedTile)}` : '')
       : g.selectedHex
         ? describeHex(g, g.selectedHex)
         : 'ヘックスやユニットをクリックすると情報が表示されます。');
@@ -204,6 +227,7 @@ const inputDeps: InputDeps = { getGame: current, refresh };
 const boardCallbacks: BoardCallbacks = {
   onHexClick: (c) => {
     hud.hideContext();
+    current().pinnedInfo = null; // 左クリックで右クリック固定表示を解除する
     handleHexClick(inputDeps, c);
   },
   onHexRightClick: (c, screen) => {
@@ -233,7 +257,7 @@ const boardCallbacks: BoardCallbacks = {
     const actions: ContextAction[] = [];
 
     // 生産: メニュー内ではユニットを選ばず、そのヘックスを選択して右ペインを開く(生産は右ペインから)
-    if (!g.busy && !g.over && !unitAt(g, t) && producibleHexKeys(g, 'p').has(key(t))) {
+    if (!g.busy && !g.over && !unitAt(g, t) && Object.keys(g.defs).some((kind) => canProduce(g, 'p', kind, t))) {
       actions.push({
         label: '生産する(右ペインを開く)',
         run: () => {

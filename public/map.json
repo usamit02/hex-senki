@@ -1,20 +1,24 @@
 {
-  "name": "平原の戦い",
+  "name": "札幌争奪戦",
   "terrain": {
     "plain": "平地",
     "forest": "森",
     "water": "水",
     "mountain": "山",
     "castle": "城",
-    "marsh": "沼"
+    "marsh": "沼",
+    "fill": null
   },
   "citys": {
     "p": "滝川市",
-    "e": "伊達市"
+    "e": "苫小牧市"
   },
   "gold": {
     "p": 20,
     "e": 20
   },
-  "units": []
+  "units": [],
+  "airports": [
+    "千歳市"
+  ]
 }

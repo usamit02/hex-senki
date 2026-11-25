@@ -62,5 +62,6 @@ export async function loadMap(): Promise<MapData> {
     roads: hexMap.roads ?? [],
     rivers: hexMap.rivers ?? [],
     towns: hexMap.towns ?? [],
+    airports: hexMap.airports ?? [],
   };
 }

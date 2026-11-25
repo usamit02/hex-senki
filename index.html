@@ -3,7 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>ヘックス戦記</title>
+<title>ヘックス戦記 | ブラウザで遊べる無料の戦略シミュレーションゲーム</title>
+<meta name="description" content="ブラウザで遊べる無料の戦略シミュレーションゲームを、無料AIだけ使ってオープンソースで作っています。Vite + TypeScript製。指揮官がVOICEVOXで喋ったり、ヘックスマップで戦ったりする予定です。まだ開発初期ですが、一緒に作ってくれる人や、興味がある人はぜひXをフォローしてください。進捗を発信していきます。">
+<meta name="keywords" content="戦略シミュレーション,ウォーシミュレーション,ヘックスマップ,ブラウザゲーム,無料ゲーム,オープンソース,Vite,TypeScript,VOICEVOX">
+<meta name="author" content="ヘックス戦記 開発チーム">
+<meta name="theme-color" content="#20303c">
+<!-- Open Graph -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="ヘックス戦記">
+<meta property="og:title" content="ヘックス戦記 | ブラウザで遊べる無料の戦略シミュレーションゲーム">
+<meta property="og:description" content="ブラウザで遊べる無料の戦略シミュレーションゲームを、無料AIだけ使ってオープンソースで作っています。Vite + TypeScript製。指揮官がVOICEVOXで喋ったり、ヘックスマップで戦ったりする予定です。まだ開発初期ですが、一緒に作ってくれる人や、興味がある人はぜひXをフォローしてください。進捗を発信していきます。">
+<meta property="og:image" content="ogp.png">
+<meta property="og:locale" content="ja_JP">
+<!-- Twitter Card (X) -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="ヘックス戦記 | ブラウザで遊べる無料の戦略シミュレーションゲーム">
+<meta name="twitter:description" content="ブラウザで遊べる無料の戦略シミュレーションゲームを、無料AIだけ使ってオープンソースで作っています。Vite + TypeScript製。指揮官がVOICEVOXで喋ったり、ヘックスマップで戦ったりする予定です。まだ開発初期ですが、一緒に作ってくれる人や、興味がある人はぜひXをフォローしてください。進捗を発信していきます。">
+<meta name="twitter:image" content="ogp.png">
 </head>
 <body>
   <!-- 要件3: マップをブラウザ全面に表示。操作・情報は右クリックメニューと隠れるペインで行う -->
@@ -22,6 +38,7 @@
 
   <!-- 左ペイン: 選択中情報 + 全体図 -->
   <aside id="pane-left" class="pane pane-left">
+    <button class="pin-btn" data-pin="left" type="button" title="出しっぱなしにする">📌</button>
     <h2>情報</h2>
     <div id="info">ヘックスやユニットをクリックすると情報が表示されます。</div>
     <h2 class="mm-title">全体図</h2>
@@ -31,12 +48,26 @@
 
   <!-- 上ペイン: 部隊表 -->
   <aside id="pane-top" class="pane pane-top">
-    <h2>部隊表</h2>
-    <div id="unit-table"></div>
+    <button class="pin-btn" data-pin="top" type="button" title="出しっぱなしにする">📌</button>
+    <div class="top-flex">
+      <div class="top-col">
+        <h2>部隊表</h2>
+        <div class="top-tools">
+          <button id="btn-unacted" type="button">未行動のみ</button>
+          <button id="btn-next-unit" type="button">次部隊 ▶</button>
+        </div>
+        <div id="unit-table"></div>
+      </div>
+      <div class="top-col">
+        <h2>状況表</h2>
+        <div id="situation"></div>
+      </div>
+    </div>
   </aside>
 
   <!-- 右ペイン: 生産 -->
   <aside id="pane-right" class="pane pane-right">
+    <button class="pin-btn" data-pin="right" type="button" title="出しっぱなしにする">📌</button>
     <h2>生産</h2>
     <div id="produce-target">ヘックスを選択すると、生産できる場合はここから生産できます。</div>
     <div id="produce"></div>
@@ -45,6 +76,7 @@
 
   <!-- 下ペイン: メッセージとコマンド -->
   <aside id="pane-bottom" class="pane pane-bottom">
+    <button class="pin-btn" data-pin="bottom" type="button" title="出しっぱなしにする">📌</button>
     <div id="msg"></div>
     <div class="bar">
       <button id="be" class="go">ターン終了</button>
@@ -63,10 +95,11 @@
 
   <!-- 右クリックメニュー -->
   <div id="ctx" hidden></div>
+  <div id="battle-popup" hidden></div>
 
   <!-- ゲーム設定画面(開始時と新規ゲーム時に表示) -->
   <div id="save-screen" hidden>
-    <div class="settings-box">
+    <div class="settings-card">
       <h1>セーブデータ</h1>
       <p class="settings-desc">読み込むセーブを選んでください。</p>
       <div id="save-list"></div>

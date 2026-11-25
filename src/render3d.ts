@@ -13,7 +13,9 @@ import type { Game, Side, Unit, UnitDefs } from './types';
  */
 
 const base = import.meta.env.BASE_URL;
-const ROTATE_SPEED = 0.9; // rad/s
+const ROTATE_SPEED = 0.9;
+/** 行動済みユニットの固定の向き(右斜め前) */
+const ACTED_YAW = -Math.PI / 6; // rad/s
 const VIEWPORT_FACTOR = 2.6; // ヘックス半径に対するモデル表示枠の倍率
 
 interface Instance {
@@ -108,13 +110,27 @@ export class UnitModelLayer {
     r.clear();
     r.setScissorTest(true);
     for (const v of views) {
+      if (v.unit.carriedBy) continue; // 搭乗中の歩兵は単独では描かない(輸送側に小さく重ねる)
       seen.add(v.unit);
       const inst = this.instanceFor(g, v);
       if (!inst) continue;
-      // 未行動はゆっくり回転、行動済みは静止
-      const idle = !(v.unit.moved && v.unit.acted);
-      if (idle) inst.model.rotation.y += ROTATE_SPEED * dt;
+      // 未行動はゆっくり回転、行動済みは右斜め前を向いて静止する
+      if (v.unit.acted) {
+        inst.model.rotation.y = ACTED_YAW;
+      } else {
+        inst.model.rotation.y += ROTATE_SPEED * dt;
+      }
       this.drawOne(r, v, inst);
+      // 搭乗中の歩兵は 1/4 サイズで左上に重ねて表示する
+      const cargo = g.units.find((u) => u.carriedBy === v.unit && u.hp > 0);
+      if (cargo) {
+        seen.add(cargo);
+        const cinst = this.instanceFor(g, { unit: cargo, x: v.x, y: v.y, size: v.size });
+        if (cinst) {
+          cinst.model.rotation.y = inst.model.rotation.y;
+          this.drawCargo(r, v, cinst);
+        }
+      }
     }
     r.setScissorTest(false);
     // 消えたユニットの後片付け
@@ -143,6 +159,22 @@ export class UnitModelLayer {
     inst = { scene, model, side: v.unit.side, kind: v.unit.kind };
     this.instances.set(v.unit, inst);
     return inst;
+  }
+
+  /** 搭乗中の歩兵を輸送ユニットの表示枠の左上に 1/4 サイズで描く */
+  private drawCargo(r: THREE.WebGLRenderer, v: UnitView, inst: Instance): void {
+    const box = Math.max(8, v.size * VIEWPORT_FACTOR);
+    const mini = box * 0.42;
+    // 左上に寄せつつ、隣のヘックスへはみ出さないよう少し中央寄りに置く
+    const x = v.x - box / 2 + box * 0.08;
+    const yTop = v.y - box / 2 + box * 0.08;
+    const height = window.innerHeight;
+    const y = height - (yTop + mini);
+    if (x + mini < 0 || yTop + mini < 0 || x > window.innerWidth || yTop > height) return;
+    r.setViewport(x, y, mini, mini);
+    r.setScissor(x, y, mini, mini);
+    r.clearDepth();
+    r.render(inst.scene, this.camera);
   }
 
   private drawOne(r: THREE.WebGLRenderer, v: UnitView, inst: Instance): void {

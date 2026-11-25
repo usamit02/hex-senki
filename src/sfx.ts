@@ -87,6 +87,19 @@ function thumps(count: number, interval: number, freq: number, gain = 0.2): void
   }
 }
 
+/** 占領時の旗揚げファンファーレ(短い上昇アルペジオ) */
+export function playCaptureSfx(): void {
+  const notes = [523, 659, 784, 1046];
+  notes.forEach((f, i) => tone({ dur: 0.16, type: 'triangle', from: f, gain: 0.14, delay: i * 0.09 }));
+}
+
+/** 全滅時の爆発音 */
+export function playExplosionSfx(): void {
+  noise({ dur: 1.0, from: 1400, to: 60, gain: 0.5 });
+  tone({ dur: 0.9, type: 'sine', from: 220, to: 32, gain: 0.45 });
+  noise({ dur: 0.35, from: 3000, gain: 0.2, delay: 0.05 });
+}
+
 /** 移動効果音 */
 export function playMoveSfx(kind: string): void {
   switch (kind) {
