@@ -51,7 +51,7 @@ export function handleHexClick({ getGame, refresh }: InputDeps, h: Cube): void {
       return;
     }
     if (!u && g.reach?.has(key(t)) && !sel.moved) {
-      moveUnit(g, sel, t);
+      moveUnit(g, sel, t, g.reach?.get(key(t)) ?? 0);
       g.reach = null;
       refresh();
       return;
@@ -115,6 +115,9 @@ export function describeHex(g: Game, t: Tile): string {
   }
   const terrain = TERRAINS[t.terrain];
   lines.push(`地形: ${terrain.label}(地上の移動コスト ${terrain.moveCost === Infinity ? '通行不可' : terrain.moveCost} / 地上の防御 +${terrain.defense}、航空は地形無視)`);
+  if (t.hasRoad && t.hasRiver) lines.push('橋: 道路と河川が重なるため移動コスト1');
+  else if (t.hasRoad) lines.push('道路あり: 移動コスト1');
+  else if (t.hasRiver) lines.push('河川あり: 地上は移動不可(コスト255)');
   lines.push(`座標: col ${t.col} / row ${t.row} / ヘックス #${t.id}`);
   if (!town && t.city) {
     lines.push(`拠点: ${t.city.capital ? '城(首都)' : '村'} / 所有: ${ownerName(t.city.owner)}`);
@@ -135,12 +138,12 @@ export function describeUnit(g: Game, u: Unit): string {
   const theme = getTheme(g.settings.theme);
   const lines = [
     `<b>${def.name}</b>(${u.side === 'p' ? '味方' : '敵'})`,
-    `HP ${u.hp}/${def.hp} / 移動 ${def.move} / 防御 ${def.defense} / ${def.domain === 'air' ? '航空' : '地上'}`,
+    `HP ${u.hp}/${def.hp} / 移動 ${def.move} / 防御 ${def.defense} / 燃料 ${u.fuel}/${def.fuel} / ${def.domain === 'air' ? '航空' : '地上'}`,
     `位置: col ${t?.col ?? '?'} / row ${t?.row ?? '?'}(${t ? theme.terrainLabels[t.terrain] : '?'})`,
     `状態: ${u.acted ? '行動済み' : u.moved ? '移動済み(攻撃・確定が可能)' : '未行動'}`,
   ];
   if (def.canCapture) lines.push('このユニットは town を占領できます。');
-  if (def.isSupply) lines.push('補給ユニット: 隣接する味方の残弾を回復します。');
+  if (def.isSupply) lines.push('補給ユニット: 隣接する味方の残弾・燃料を回復します。');
   if (def.weapons.length === 0) {
     lines.push('武装なし(攻撃できません)');
   } else {

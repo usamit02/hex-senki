@@ -52,8 +52,10 @@ export interface UnitDef {
   model: string;
   /** towns を占領できるか */
   canCapture: boolean;
-  /** 補給ユニットか(隣接した味方の残弾を回復する) */
+  /** 補給ユニットか(隣接した味方の残弾・燃料を回復する) */
   isSupply?: boolean;
+  /** 最大燃料。移動コストの合計がこの範囲まで動ける */
+  fuel: number;
   /** 武装(複数可)。空なら攻撃できない */
   weapons: WeaponDef[];
   /** 移動効果音の種類(sfx.ts のキー) */
@@ -178,6 +180,10 @@ export interface Tile extends Cube {
   geo: { x: number; y: number };
   roadScore: number;
   riverScore: number;
+  /** 道路が描かれているか(移動コスト1になる) */
+  hasRoad: boolean;
+  /** 河川が描かれているか(移動不可。道路と両方あれば橋でコスト1) */
+  hasRiver: boolean;
 }
 
 /** ゲーム内に取り込んだ都市(hex.json towns 由来)。占領で owner が変わる */
@@ -208,6 +214,8 @@ export interface Unit extends Cube {
   hp: number;
   /** 武装ごとの残弾(武装名 -> 残り)。無制限の武装は -1 */
   ammo: Record<string, number>;
+  /** 残り燃料。移動コスト分だけ減る。航空ユニットは 0 になると墜落する */
+  fuel: number;
   moved: boolean;
   acted: boolean;
   /** 移動取り消し用: 移動前の位置と、移動先の拠点・towns の元の持ち主 */
@@ -234,6 +242,8 @@ export interface Game {
   /** 左クリックで選択中のヘックス(ユニットの有無によらず保持する) */
   selectedHex: Tile | null;
   reach: Map<string, number> | null;
+  /** 右クリック時に左ペインへ固定表示する情報(左クリックで解除) */
+  pinnedInfo: string | null;
   /** 表示待ちの交戦演出(attack が積み、画面側が消費する) */
   pendingFx: BattleFx | null;
   /** 表示待ちの移動効果音(moveUnit が積む) */

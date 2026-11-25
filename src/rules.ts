@@ -5,8 +5,20 @@ import type { Cube, Game, Side, Tile, Unit, WeaponDef } from './types';
 
 const sideName = (s: Side): string => (s === 'p' ? 'あなた' : '敵');
 
-/** 移動コスト: 航空は地形を無視して常に1。地上は地形+兵種固有の上書き */
+/** 河川の移動コスト(移動できない) */
+export const RIVER_MOVE_COST = 255;
+
+/**
+ * 移動コスト。
+ * - fill は誰も通行できない
+ * - 航空は地形・道路・河川を無視して常に1
+ * - 地上: 道路と河川の両方があるヘックスは橋で1、道路のみは1、河川のみは255(通行不可)、それ以外は地形コスト
+ */
 export function moveCostOf(g: Game, u: Unit, t: Tile): number {
+  if (t.terrain === 'fill') return Infinity;
+  if (g.defs[u.kind].domain === 'air') return 1;
+  if (t.hasRoad) return 1; // 道路のみ=1、道路+河川=橋で1
+  if (t.hasRiver) return RIVER_MOVE_COST;
   return moveCostFor(g.defs[u.kind], t.terrain);
 }
 
@@ -37,8 +49,14 @@ export function pickWeapon(g: Game, attacker: Unit, defender: Unit): WeaponDef |
   return best;
 }
 
-/** その相手を攻撃できる武装があるか */
+/** 射程2以上の武装を持つユニットか(自走砲など) */
+export function hasLongRangeWeapon(g: Game, u: Unit): boolean {
+  return g.defs[u.kind].weapons.some((w) => w.range >= 2);
+}
+
+/** その相手を攻撃できる武装があるか。射程2以上のユニットは移動前しか攻撃できない */
 export function canAttackTarget(g: Game, a: Unit, d: Unit): boolean {
+  if (a.moved && hasLongRangeWeapon(g, a)) return false;
   return pickWeapon(g, a, d) !== null;
 }
 
@@ -80,9 +98,10 @@ export function resupplyFromAdjacentSupply(g: Game, u: Unit): boolean {
   return false;
 }
 
-/** 駒が移動できるマスと、その移動コスト。ZOC有効時は敵隣接ヘックスに入ったらそこで移動終了 */
+/** 駒が移動できるマスと、その移動コスト。移動力と燃料の両方の範囲内。ZOC有効時は敵隣接ヘックスに入ったらそこで移動終了 */
 export function reachable(g: Game, u: Unit): Map<string, number> {
   const def = g.defs[u.kind];
+  const budget = g.settings.supply ? Math.min(def.move, u.fuel) : def.move;
   const res = new Map<string, number>([[key(u), 0]]);
   const open: Array<{ at: Cube; cost: number }> = [{ at: pos(u), cost: 0 }];
   while (open.length) {
@@ -96,7 +115,7 @@ export function reachable(g: Game, u: Unit): Map<string, number> {
       const other = unitAt(g, t);
       if (other && other.side !== u.side) continue;
       const nc = cost + moveCostOf(g, u, t);
-      if (nc > def.move) continue;
+      if (nc > budget) continue;
       const k = key(t);
       const old = res.get(k);
       if (old === undefined || nc < old) {
@@ -118,7 +137,7 @@ export function inRange(g: Game, a: Unit, d: Unit): boolean {
   return canAttackTarget(g, a, d);
 }
 
-export function moveUnit(g: Game, u: Unit, t: Tile): void {
+export function moveUnit(g: Game, u: Unit, t: Tile, cost = 0): void {
   const town = townAt(g, t);
   u.from = {
     pos: pos(u),
@@ -128,6 +147,14 @@ export function moveUnit(g: Game, u: Unit, t: Tile): void {
   };
   setPos(u, t);
   u.moved = true;
+  if (g.settings.supply) {
+    u.fuel = Math.max(0, u.fuel - cost);
+    // 航空ユニットは燃料が尽きたら墜落する
+    if (u.fuel <= 0 && g.defs[u.kind].domain === 'air') {
+      u.hp = 0;
+      g.message = `${sideName(u.side)}の${g.defs[u.kind].name}は燃料切れで墜落した。`;
+    }
+  }
   g.pendingMoveSfx = g.defs[u.kind].moveSfx;
   // 移動後: 補給ユニットに隣接していれば残弾回復
   resupplyFromAdjacentSupply(g, u);

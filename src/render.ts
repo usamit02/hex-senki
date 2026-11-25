@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { boardSize, fromPixel, key, toPixel } from './hex';
+import { fromPixel, key, toPixel } from './hex';
 import { inRange } from './rules';
 import { townAt, unitAt } from './state';
 import { getTheme } from './themes';
@@ -56,7 +56,7 @@ export interface Renderer {
   centerOnWorld(x: number, y: number): void;
   /** ユニットを画面中央に寄せる(部隊表用) */
   focusOn(u: Unit): void;
-  worldSize(g: Game): { w: number; h: number };
+  worldSize(): { x: number; y: number; w: number; h: number };
 }
 
 const ROAD_NATIONAL = 0xd94f30;
@@ -111,6 +111,9 @@ class BoardScene extends Phaser.Scene {
   private gameRef: Game | null = null;
   private cb: BoardCallbacks | null = null;
   private tileLayer!: Phaser.GameObjects.Container;
+  /** fill を除いた実ヘックスのピクセル範囲(カメラ制限・全体図に使う) */
+  private realBounds = { x: 0, y: 0, w: 0, h: 0 };
+  private minZoom = 0.05;
   private gTerrain!: Phaser.GameObjects.Graphics;
   private gLines!: Phaser.GameObjects.Graphics;
   private gHighlight!: Phaser.GameObjects.Graphics;
@@ -260,13 +263,16 @@ class BoardScene extends Phaser.Scene {
   }
 
   centerOnWorld(x: number, y: number): void {
-    const g = this.gameRef;
-    if (!g) return;
-    const { w, h } = boardSize(g.width, g.height, HEX_SIZE);
+    const b = this.realBounds;
     this.cameras.main.centerOn(
-      Phaser.Math.Clamp(x, 0, w),
-      Phaser.Math.Clamp(y, 0, h),
+      Phaser.Math.Clamp(x, b.x, b.x + b.w),
+      Phaser.Math.Clamp(y, b.y, b.y + b.h),
     );
+  }
+
+  /** 実ヘックスのピクセル範囲(全体図用) */
+  realWorldBounds(): { x: number; y: number; w: number; h: number } {
+    return this.realBounds;
   }
 
   focusOn(u: Unit): void {
@@ -278,8 +284,8 @@ class BoardScene extends Phaser.Scene {
   reset(g: Game): void {
     this.gameRef = g;
     this.builtFor = null;
-    this.fitView();
     this.refresh();
+    this.fitView();
   }
 
   create(): void {
@@ -305,7 +311,7 @@ class BoardScene extends Phaser.Scene {
     // ホイール: ポインタ位置を中心に拡大/縮小
     this.input.on('wheel', (pointer: Phaser.Input.Pointer, _objs: unknown, _dx: number, dy: number) => {
       const before = pointer.positionToCamera(cam) as { x: number; y: number };
-      const zoom = Phaser.Math.Clamp(cam.zoom * (dy > 0 ? 0.88 : 1.14), 0.05, 3.5);
+      const zoom = Phaser.Math.Clamp(cam.zoom * (dy > 0 ? 0.88 : 1.14), Math.min(this.minZoom, 3.5), 3.5);
       cam.setZoom(zoom);
       const after = pointer.positionToCamera(cam) as { x: number; y: number };
       cam.scrollX += before.x - after.x;
@@ -345,18 +351,18 @@ class BoardScene extends Phaser.Scene {
       }
     });
 
-    this.fitView();
     this.refresh();
+    this.fitView();
   }
 
   fitView(): void {
-    const g = this.gameRef;
-    if (!g) return;
-    const { w, h } = boardSize(g.width, g.height, HEX_SIZE);
+    if (!this.gameRef) return;
+    if (this.realBounds.w <= 0) return; // 静的レイヤー未構築時は何もしない
+    const b = this.realBounds;
     const cam = this.cameras.main;
-    const zoom = Math.min(cam.width / (w + 40), cam.height / (h + 40));
+    const zoom = Math.min(cam.width / (b.w + 16), cam.height / (b.h + 16));
     cam.setZoom(Phaser.Math.Clamp(zoom, 0.05, 3.5));
-    cam.centerOn(w / 2, h / 2);
+    cam.centerOn(b.x + b.w / 2, b.y + b.h / 2);
   }
 
   update(): void {
@@ -391,6 +397,21 @@ class BoardScene extends Phaser.Scene {
   private buildStatic(g: Game): void {
     const size = HEX_SIZE;
     const theme = getTheme(g.settings.theme);
+    // fill を除いた実ヘックスの範囲を計算し、カメラの移動・縮小をこの範囲に制限する
+    {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const t of g.tiles.values()) {
+        if (t.terrain === 'fill') continue;
+        const p = toPixel(t, size);
+        minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+        minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+      }
+      if (!Number.isFinite(minX)) { minX = 0; minY = 0; maxX = size; maxY = size; }
+      this.realBounds = { x: minX - size, y: minY - size, w: maxX - minX + size * 2, h: maxY - minY + size * 2 };
+      const cam = this.cameras.main;
+      cam.setBounds(this.realBounds.x, this.realBounds.y, this.realBounds.w, this.realBounds.h);
+      this.minZoom = Math.min(cam.width / this.realBounds.w, cam.height / this.realBounds.h);
+    }
     this.cameras.main.setBackgroundColor(theme.palette.bg);
     this.ensureTileTextures(g.settings.theme);
     // --- 地形タイル画像(色塗りつぶしの代わり)。道路・河川はこの上に重ねる ---
@@ -439,6 +460,24 @@ class BoardScene extends Phaser.Scene {
       }
     };
     for (const r of g.rivers) drawLine(r.tiles, RIVER_COLOR, size * 0.2, 'river');
+    // 橋: 道路と河川が重なるヘックスでは、道路に沿って橋の床板を描く(道路の下に敷く)
+    for (const r of g.roads) {
+      const centers = r.tiles.map((t) => toPixel(t, size));
+      for (let i = 0; i < r.tiles.length; i++) {
+        const tile = tileByKey(r.tiles[i]);
+        if (!tile || !tile.hasRiver || townHexIds.has(tile.id)) continue;
+        const from = i > 0
+          ? { x: (centers[i - 1].x + centers[i].x) / 2, y: (centers[i - 1].y + centers[i].y) / 2 }
+          : centers[i];
+        const to = i < r.tiles.length - 1
+          ? { x: (centers[i].x + centers[i + 1].x) / 2, y: (centers[i].y + centers[i + 1].y) / 2 }
+          : centers[i];
+        gl.lineStyle(size * 0.46, 0xcbb59a, 1);
+        gl.beginPath(); gl.moveTo(from.x, from.y); gl.lineTo(to.x, to.y); gl.strokePath();
+        gl.lineStyle(size * 0.5, 0x8a6f4d, 0.55);
+        gl.beginPath(); gl.moveTo(from.x, from.y); gl.lineTo(centers[i].x, centers[i].y); gl.strokePath();
+      }
+    }
     for (const r of g.roads) {
       const national = r.name.includes('国道');
       drawLine(r.tiles, national ? ROAD_NATIONAL : ROAD_OTHER, size * (national ? 0.26 : 0.2), 'road');
@@ -609,8 +648,8 @@ export function createRenderer(parent: HTMLElement): Renderer {
     focusOn(u) {
       boardBridge.scene?.focusOn(u);
     },
-    worldSize(g) {
-      return boardSize(g.width, g.height, HEX_SIZE);
+    worldSize() {
+      return boardBridge.scene ? boardBridge.scene.realWorldBounds() : { x: 0, y: 0, w: 1, h: 1 };
     },
   };
 }

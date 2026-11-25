@@ -50,6 +50,8 @@
       <button id="be" class="go">ターン終了</button>
       <button id="bf">全体表示</button>
       <button id="bn">新規ゲーム</button>
+      <button id="bsv">セーブ</button>
+      <button id="bld">ロード</button>
     </div>
     <details>
       <summary>遊び方</summary>
@@ -63,6 +65,17 @@
   <div id="ctx" hidden></div>
 
   <!-- ゲーム設定画面(開始時と新規ゲーム時に表示) -->
+  <div id="save-screen" hidden>
+    <div class="settings-box">
+      <h1>セーブデータ</h1>
+      <p class="settings-desc">読み込むセーブを選んでください。</p>
+      <div id="save-list"></div>
+      <div class="settings-actions">
+        <button id="save-new" type="button">新規ゲーム</button>
+        <button id="save-close" type="button" hidden>閉じる</button>
+      </div>
+    </div>
+  </div>
   <div id="settings-screen" hidden>
     <div class="settings-card">
       <h1>ヘックス戦記 — ゲーム設定</h1>

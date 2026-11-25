@@ -2,6 +2,8 @@ import './style.css';
 import { enemyAct } from './ai';
 import { AiWorkerPool } from './ai/pool';
 import { loadMap, loadThemeUnitDefs } from './data';
+import { addSave, applySave, deleteSave, listSaves, type SaveData } from './save';
+import { showSaveScreen } from './savescreen';
 import { confirmSelected, describeHex, describeUnit, handleHexClick, undoSelectedMove, type InputDeps } from './input';
 import { createRenderer, type BoardCallbacks } from './render';
 import { UnitModelLayer } from './render3d';
@@ -61,17 +63,18 @@ function refresh(): void {
   }
   renderer.draw(g);
   hud.update(g);
-  // 左ペイン: ユニット選択中はユニット情報、それ以外は選択中ヘックスの情報
-  const infoHtml = g.selected
-    ? describeUnit(g, g.selected)
-    : g.selectedHex
-      ? describeHex(g, g.selectedHex)
-      : 'ヘックスやユニットをクリックすると情報が表示されます。';
+  // 左ペイン: 右クリックで固定した情報 > ユニット情報 > 選択中ヘックスの情報
+  const infoHtml = g.pinnedInfo
+    ?? (g.selected
+      ? describeUnit(g, g.selected)
+      : g.selectedHex
+        ? describeHex(g, g.selectedHex)
+        : 'ヘックスやユニットをクリックすると情報が表示されます。');
   if (infoHtml !== lastInfoHtml) {
     lastInfoHtml = infoHtml;
     hud.showInfo(infoHtml);
   }
-  hud.drawMinimap(g, renderer.getViewport(), renderer.worldSize(g));
+  hud.drawMinimap(g, renderer.getViewport(), renderer.worldSize());
 }
 
 function startGame(settings: GameSettings): boolean {
@@ -92,6 +95,21 @@ function startGame(settings: GameSettings): boolean {
   if (settings.theme === 'modern') {
     modelLayer.start(() => game);
     void modelLayer.loadModels(game.defs);
+  }
+  refresh();
+  return true;
+}
+
+/** セーブデータからゲームを開始する */
+function startFromSave(data: SaveData): boolean {
+  if (!startGame(data.settings)) return false;
+  if (!game) return false;
+  try {
+    applySave(game, data);
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    hud.showError(`セーブデータを読み込めませんでした: ${detail}`);
+    return false;
   }
   refresh();
   return true;
@@ -138,9 +156,35 @@ const hud = createHud({
   },
   onEndTurn: endTurn,
   onNewGame: newGame,
+  onSave: () => {
+    const g = game;
+    if (!g) return;
+    const label = `${getTheme(g.settings.theme).label} ターン${g.turn}`;
+    if (addSave(g, label)) {
+      g.message = 'セーブしました。';
+    } else {
+      hud.showError('セーブは最大16件までです。ロード画面から不要なセーブを削除してください。');
+      return;
+    }
+    refresh();
+  },
+  onLoad: () => {
+    const entries = listSaves();
+    if (entries.length === 0) {
+      hud.showError('セーブデータがありません。');
+      return;
+    }
+    showSaveScreen(entries, {
+      onLoad: (i) => startFromSave(entries[i].data),
+      onDelete: (i) => deleteSave(i),
+      onNewGame: () => newGame(),
+      onClose: () => undefined,
+    });
+  },
   onFitView: () => renderer.fitView(),
   onSelectUnit: (u) => {
     const g = current();
+    g.pinnedInfo = null;
     g.selected = u;
     g.selectedHex = tileAt(g, u) ?? null;
     g.reach = null;
@@ -149,9 +193,9 @@ const hud = createHud({
   },
   onMinimapPan: (fx, fy) => {
     const g = current();
-    const { w, h } = renderer.worldSize(g);
-    renderer.centerOnWorld(fx * w, fy * h);
-    hud.drawMinimap(g, renderer.getViewport(), renderer.worldSize(g));
+    const world = renderer.worldSize();
+    renderer.centerOnWorld(world.x + fx * world.w, world.y + fy * world.h);
+    hud.drawMinimap(g, renderer.getViewport(), world);
   },
 });
 
@@ -180,7 +224,11 @@ const boardCallbacks: BoardCallbacks = {
       return;
     }
     g.selectedHex = t;
-    const html = describeHex(g, t);
+    // ヘックス情報に、そのマスのユニット情報(燃料含む)も添える
+    const occupant = unitAt(g, t);
+    const html = describeHex(g, t) + (occupant ? `<hr>${describeUnit(g, occupant)}` : '');
+    // ユニットが居るヘックスでも、右クリックではヘックス情報を左ペインに固定表示する
+    g.pinnedInfo = html;
     hud.showInfo(html);
     const actions: ContextAction[] = [];
 
@@ -214,9 +262,20 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refresh);
 async function boot(): Promise<void> {
   try {
     [mapData, fileDefs] = await Promise.all([loadMap(), loadThemeUnitDefs()]);
-    // 起動時は設定画面を出さず、現代戦(既定設定)でそのまま開始する。
+    // 起動時のセーブ判定: なければ通常起動、1件だけならそれを読み込み、複数なら選択画面を出す。
     // 設定画面は「新規ゲーム」を押したときにだけ表示する
-    startGame(DEFAULT_SETTINGS);
+    const entries = listSaves();
+    if (entries.length === 0) {
+      startGame(DEFAULT_SETTINGS);
+    } else if (entries.length === 1) {
+      if (!startFromSave(entries[0].data)) startGame(DEFAULT_SETTINGS);
+    } else {
+      showSaveScreen(entries, {
+        onLoad: (i) => startFromSave(listSaves()[i].data),
+        onDelete: (i) => deleteSave(i),
+        onNewGame: () => startGame(DEFAULT_SETTINGS),
+      });
+    }
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     hud.showError(`データの読み込みに失敗しました(${detail})。`);

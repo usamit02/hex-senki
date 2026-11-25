@@ -1,5 +1,5 @@
-import { distance, equals } from './hex';
-import { attack, canProduce, inRange, moveUnit, produce, reachable, resupplyFromAdjacentSupply, tryCapture } from './rules';
+import { distance, equals, key } from './hex';
+import { attack, canProduce, hasLongRangeWeapon, inRange, moveUnit, produce, reachable, resupplyFromAdjacentSupply, tryCapture } from './rules';
 import { capitalOf, liveUnits, producibleHexKeys } from './state';
 import { TERRAINS } from './terrain';
 import type { Cube, Game, Tile, Unit } from './types';
@@ -32,7 +32,15 @@ export const enemyRecruit = enemyProduce;
 
 /** 敵の駒1体の行動: 最も近い味方に向かって移動し、攻撃できれば最も弱い相手を攻撃する */
 export function enemyAct(g: Game, u: Unit): void {
-  resupplyFromAdjacentSupply(g, u); // 移動前: 補給ユニット隣接で残弾回復
+  resupplyFromAdjacentSupply(g, u); // 移動前: 補給ユニット隣接で残弾・燃料回復
+  // 射程2以上のユニットは移動前しか攻撃できないので、撃てる相手がいるなら移動せず攻撃する
+  if (hasLongRangeWeapon(g, u)) {
+    const targets0 = liveUnits(g, 'p').filter((f) => f.hp > 0 && inRange(g, u, f)).sort((a, b) => a.hp - b.hp);
+    if (targets0.length > 0) {
+      attack(g, u, targets0[0]);
+      return;
+    }
+  }
   const def = g.defs[u.kind];
   const foes = liveUnits(g, 'p');
   const pCap = capitalOf(g, 'p');
@@ -42,7 +50,8 @@ export function enemyAct(g: Game, u: Unit): void {
 
   let best: Tile | null = null;
   let bestScore = -Infinity;
-  for (const k of reachable(g, u).keys()) {
+  const reach = reachable(g, u);
+  for (const k of reach.keys()) {
     const t = g.tiles.get(k);
     if (!t) continue;
     let score = -distance(t, target) * 2;
@@ -61,7 +70,7 @@ export function enemyAct(g: Game, u: Unit): void {
       best = t;
     }
   }
-  if (best && !equals(best, u)) moveUnit(g, u, best);
+  if (best && !equals(best, u)) moveUnit(g, u, best, reach.get(key(best)) ?? 0);
   if (g.over) return;
 
   const targets = foes.filter((f) => f.hp > 0 && inRange(g, u, f)).sort((a, b) => a.hp - b.hp);

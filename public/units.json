@@ -7,6 +7,7 @@
       "move": 4,
       "defense": 4,
       "cost": 30,
+      "fuel": 12,
       "domain": "ground",
       "category": "tank",
       "model": "tank",
@@ -54,6 +55,7 @@
       "move": 3,
       "defense": 1,
       "cost": 25,
+      "fuel": 9,
       "domain": "ground",
       "category": "sam",
       "model": "sam",
@@ -97,6 +99,7 @@
       "move": 8,
       "defense": 2,
       "cost": 35,
+      "fuel": 16,
       "domain": "air",
       "category": "jet",
       "model": "jet",
@@ -143,6 +146,7 @@
       "move": 6,
       "defense": 2,
       "cost": 30,
+      "fuel": 12,
       "domain": "air",
       "category": "heli",
       "model": "heli",
@@ -188,6 +192,7 @@
       "move": 3,
       "defense": 1,
       "cost": 10,
+      "fuel": 9,
       "domain": "ground",
       "category": "infantry",
       "model": "infantry",
@@ -228,6 +233,39 @@
         }
       ]
     },
+    "ground_spg": {
+      "name": "自走砲",
+      "short": "砲",
+      "hp": 12,
+      "move": 3,
+      "defense": 1,
+      "cost": 30,
+      "fuel": 9,
+      "domain": "ground",
+      "category": "spg",
+      "model": "spg",
+      "canCapture": false,
+      "moveSfx": "track",
+      "weapons": [
+        {
+          "name": "榴弾砲",
+          "power": 9,
+          "minRange": 2,
+          "range": 4,
+          "ammo": 6,
+          "sfx": "cannon",
+          "vs": {
+            "tank": 1.1,
+            "sam": 1.2,
+            "infantry": 1.4,
+            "spg": 1,
+            "supply": 1.3,
+            "jet": 0.2,
+            "heli": 0.3
+          }
+        }
+      ]
+    },
     "ground_supply": {
       "name": "補給車",
       "short": "補",
@@ -235,6 +273,7 @@
       "move": 4,
       "defense": 1,
       "cost": 15,
+      "fuel": 12,
       "domain": "ground",
       "category": "supply",
       "model": "supply",
@@ -252,6 +291,7 @@
       "move": 4,
       "defense": 4,
       "cost": 40,
+      "fuel": 12,
       "domain": "ground",
       "category": "hero",
       "model": "",
@@ -284,6 +324,7 @@
       "move": 4,
       "defense": 2,
       "cost": 15,
+      "fuel": 12,
       "domain": "ground",
       "category": "swordsman",
       "model": "",
@@ -316,6 +357,7 @@
       "move": 3,
       "defense": 1,
       "cost": 30,
+      "fuel": 9,
       "domain": "ground",
       "category": "mage",
       "model": "",
@@ -363,6 +405,7 @@
       "move": 3,
       "defense": 1,
       "cost": 20,
+      "fuel": 9,
       "domain": "ground",
       "category": "priest",
       "model": "",
@@ -392,6 +435,7 @@
       "move": 3,
       "defense": 1,
       "cost": 18,
+      "fuel": 9,
       "domain": "ground",
       "category": "archer",
       "model": "",
@@ -430,6 +474,40 @@
         }
       ]
     },
+    "fantasy_catapult": {
+      "name": "投石機",
+      "short": "投",
+      "hp": 11,
+      "move": 2,
+      "defense": 1,
+      "cost": 28,
+      "fuel": 6,
+      "domain": "ground",
+      "category": "catapult",
+      "model": "",
+      "canCapture": false,
+      "moveSfx": "wheel",
+      "weapons": [
+        {
+          "name": "投石",
+          "power": 9,
+          "minRange": 2,
+          "range": 4,
+          "ammo": 6,
+          "sfx": "rocket",
+          "vs": {
+            "swordsman": 1.3,
+            "hero": 1.1,
+            "mage": 1.2,
+            "priest": 1.2,
+            "archer": 1.2,
+            "dragon": 0.4,
+            "catapult": 1,
+            "supply": 1.3
+          }
+        }
+      ]
+    },
     "fantasy_dragon": {
       "name": "ドラゴン",
       "short": "竜",
@@ -437,6 +515,7 @@
       "move": 7,
       "defense": 3,
       "cost": 45,
+      "fuel": 14,
       "domain": "air",
       "category": "dragon",
       "model": "",
@@ -486,6 +565,7 @@
       "move": 3,
       "defense": 1,
       "cost": 10,
+      "fuel": 9,
       "domain": "ground",
       "category": "ashigaru",
       "model": "",
@@ -517,6 +597,7 @@
       "move": 6,
       "defense": 2,
       "cost": 28,
+      "fuel": 18,
       "domain": "ground",
       "category": "cavalry",
       "model": "",
@@ -552,6 +633,7 @@
       "move": 3,
       "defense": 1,
       "cost": 16,
+      "fuel": 9,
       "domain": "ground",
       "category": "archer",
       "model": "",
@@ -595,6 +677,7 @@
       "move": 3,
       "defense": 1,
       "cost": 24,
+      "fuel": 9,
       "domain": "ground",
       "category": "gunner",
       "model": "",
@@ -638,6 +721,7 @@
       "move": 5,
       "defense": 3,
       "cost": 40,
+      "fuel": 15,
       "domain": "ground",
       "category": "warlord",
       "model": "",
@@ -662,6 +746,39 @@
         }
       ]
     },
+    "sengoku_cannon": {
+      "name": "大筒隊",
+      "short": "筒",
+      "hp": 11,
+      "move": 2,
+      "defense": 1,
+      "cost": 30,
+      "fuel": 6,
+      "domain": "ground",
+      "category": "cannon",
+      "model": "",
+      "canCapture": false,
+      "moveSfx": "wheel",
+      "weapons": [
+        {
+          "name": "大筒",
+          "power": 10,
+          "minRange": 2,
+          "range": 4,
+          "ammo": 5,
+          "sfx": "cannon",
+          "vs": {
+            "cavalry": 1.2,
+            "warlord": 1.2,
+            "ashigaru": 1.4,
+            "archer": 1.2,
+            "gunner": 1.1,
+            "cannon": 1,
+            "supply": 1.3
+          }
+        }
+      ]
+    },
     "sengoku_supply": {
       "name": "輜重隊",
       "short": "輜",
@@ -669,6 +786,7 @@
       "move": 4,
       "defense": 1,
       "cost": 15,
+      "fuel": 12,
       "domain": "ground",
       "category": "supply",
       "model": "",
@@ -686,6 +804,7 @@
       "move": 5,
       "defense": 3,
       "cost": 35,
+      "fuel": 15,
       "domain": "ground",
       "category": "ms",
       "model": "",
@@ -733,6 +852,7 @@
       "move": 3,
       "defense": 5,
       "cost": 45,
+      "fuel": 9,
       "domain": "ground",
       "category": "heavy",
       "model": "",
@@ -777,6 +897,7 @@
       "move": 4,
       "defense": 2,
       "cost": 30,
+      "fuel": 12,
       "domain": "ground",
       "category": "aa",
       "model": "",
@@ -808,6 +929,7 @@
       "move": 5,
       "defense": 4,
       "cost": 80,
+      "fuel": 15,
       "domain": "air",
       "category": "battleship",
       "model": "",
@@ -853,6 +975,7 @@
       "move": 8,
       "defense": 2,
       "cost": 25,
+      "fuel": 16,
       "domain": "air",
       "category": "pod",
       "model": "",
@@ -877,6 +1000,39 @@
         }
       ]
     },
+    "robot_sniper": {
+      "name": "狙撃モビルスーツ",
+      "short": "狙",
+      "hp": 14,
+      "move": 4,
+      "defense": 2,
+      "cost": 38,
+      "fuel": 12,
+      "domain": "ground",
+      "category": "sniper",
+      "model": "",
+      "canCapture": false,
+      "moveSfx": "mech",
+      "weapons": [
+        {
+          "name": "長距離ビームライフル",
+          "power": 10,
+          "minRange": 2,
+          "range": 4,
+          "ammo": 6,
+          "sfx": "beam",
+          "vs": {
+            "heavy": 1.3,
+            "ms": 1.2,
+            "aa": 1.2,
+            "sniper": 1,
+            "battleship": 0.7,
+            "pod": 0.5,
+            "supply": 1.2
+          }
+        }
+      ]
+    },
     "robot_supply": {
       "name": "補給艦",
       "short": "補",
@@ -884,6 +1040,7 @@
       "move": 5,
       "defense": 2,
       "cost": 20,
+      "fuel": 15,
       "domain": "air",
       "category": "supply",
       "model": "",

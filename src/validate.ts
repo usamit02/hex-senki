@@ -5,7 +5,7 @@ import type { UnitDefs } from './types';
  */
 export const UNIT_ID_PATTERN = /^[a-z][a-z0-9]*(_[a-z0-9]+)+$/;
 
-const NUMBER_FIELDS = ['hp', 'move', 'defense', 'cost'] as const;
+const NUMBER_FIELDS = ['hp', 'move', 'defense', 'cost', 'fuel'] as const;
 
 /** ユニット定義の書き間違いを、どの駒のどの項目か分かる形で知らせる */
 export function validateUnitDefs(defs: UnitDefs): void {

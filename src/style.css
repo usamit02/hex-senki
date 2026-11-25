@@ -73,3 +73,9 @@ details{font-size:.85rem}
 .theme-pick.selected{outline:2px solid #22d3ee}
 .theme-pick small{opacity:.75}
 button.big{width:100%;padding:10px;font-size:1.05rem}
+
+/* セーブ選択画面(settings-screen と同じ全面オーバーレイ。canvas より前面に出す) */
+#save-screen{position:fixed;inset:0;z-index:60;background:rgba(8,12,18,.88);display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 12px}
+#save-screen[hidden]{display:none}
+.save-row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #2c3844;font-size:13px}
+.save-row span{flex:1}

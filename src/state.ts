@@ -67,13 +67,14 @@ export function fullAmmo(g: { defs: UnitDefs }, kind: string): Record<string, nu
   return out;
 }
 
-/** ユニットの残弾を全回復する(補給ルールOFFなら何もしない) */
+/** ユニットの残弾と燃料を全回復する(補給ルールOFFなら何もしない) */
 export function refillAmmo(g: Game, u: Unit): void {
   if (!g.settings?.supply) return;
   u.ammo = fullAmmo(g, u.kind);
+  u.fuel = g.defs[u.kind].fuel;
 }
 
-/** 占領済み town 上にいる自軍ユニットは、HPと残弾が全回復する */
+/** 占領済み town 上にいる自軍ユニットは、HPと残弾・燃料が全回復する */
 export function resupplyOnOwnedTowns(g: Game, side: Side): void {
   for (const u of liveUnits(g, side)) {
     const town = townAt(g, u);
@@ -91,7 +92,7 @@ export const cheapestCost = (g: Game): number =>
 export function spawn(g: Game, side: Side, kind: string, at: Cube): boolean {
   if (liveUnits(g, side).length >= (g.settings?.maxUnits ?? MAX_UNITS_PER_SIDE)) return false;
   g.units.push({
-    x: at.x, y: at.y, z: at.z, side, kind, hp: g.defs[kind].hp, ammo: fullAmmo(g, kind), moved: true, acted: true, from: null,
+    x: at.x, y: at.y, z: at.z, side, kind, hp: g.defs[kind].hp, ammo: fullAmmo(g, kind), fuel: g.defs[kind].fuel, moved: true, acted: true, from: null,
   });
   return true;
 }
@@ -146,7 +147,7 @@ export function createGame(defs: UnitDefs, map: MapData, settings: GameSettings 
     }
     if (!isTerrainKind(h.terrain)) {
       throw new Error(
-        `hex.json: hex id=${h.id} (col=${h.col}, row=${h.row}) の地形 "${h.terrain}" は未対応です(plain / forest / mountain / water / marsh)`,
+        `hex.json: hex id=${h.id} (col=${h.col}, row=${h.row}) の地形 "${h.terrain}" は未対応です(plain / forest / mountain / water / marsh / fill)`,
       );
     }
     const c = fromOffset(h.col, h.row);
@@ -161,6 +162,8 @@ export function createGame(defs: UnitDefs, map: MapData, settings: GameSettings 
       geo: { x: h.center_x, y: h.center_y },
       roadScore: h.road_score,
       riverScore: h.river_score,
+      hasRoad: false,
+      hasRiver: false,
     };
     tiles.set(key(c), tile);
     tilesById.set(h.id, tile);
@@ -226,8 +229,12 @@ export function createGame(defs: UnitDefs, map: MapData, settings: GameSettings 
       throw new Error(`map.json: ${u.side === 'p' ? 'プレイヤー' : '敵'}の部隊数が上限 ${MAX_UNITS_PER_SIDE} を超えています`);
     }
     const t = tileAtOffset(u.col, u.row);
-    return { x: t.x, y: t.y, z: t.z, side: u.side, kind: u.type, hp: def.hp, ammo: fullAmmo({ defs }, u.type), moved: false, acted: false, from: null };
+    return { x: t.x, y: t.y, z: t.z, side: u.side, kind: u.type, hp: def.hp, ammo: fullAmmo({ defs }, u.type), fuel: def.fuel, moved: false, acted: false, from: null };
   });
+
+  // 道路・河川が描かれるヘックスのフラグ(移動コストの上書きと橋の判定に使う)
+  for (const l of map.roads) for (const id of l.path) { const t = tilesById.get(id); if (t) t.hasRoad = true; }
+  for (const l of map.rivers) for (const id of l.path) { const t = tilesById.get(id); if (t) t.hasRiver = true; }
 
   const game: Game = {
     defs, settings, width, height, tiles, tilesById,
@@ -243,6 +250,7 @@ export function createGame(defs: UnitDefs, map: MapData, settings: GameSettings 
     selected: null,
     selectedHex: null,
     reach: null,
+    pinnedInfo: null,
     pendingFx: null,
     pendingMoveSfx: null,
     fxSeq: 0,

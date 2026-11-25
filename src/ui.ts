@@ -8,6 +8,8 @@ export interface HudHandlers {
   onProduce(kind: string): void;
   onEndTurn(): void;
   onNewGame(): void;
+  onSave(): void;
+  onLoad(): void;
   onFitView(): void;
   /** 部隊表でユニットが選ばれた */
   onSelectUnit(u: Unit): void;
@@ -33,7 +35,7 @@ export interface Hud {
   /** 指定したペインを開く(他は閉じる) */
   openPane(side: PaneSide): void;
   /** ミニマップ全体図を描き直す(地形・town・ユニット・表示範囲の赤枠) */
-  drawMinimap(g: Game, viewport: { x: number; y: number; w: number; h: number } | null, world: { w: number; h: number }): void;
+  drawMinimap(g: Game, viewport: { x: number; y: number; w: number; h: number } | null, world: { x: number; y: number; w: number; h: number }): void;
 }
 
 const el = <T extends HTMLElement>(id: string): T => {
@@ -57,6 +59,8 @@ export function createHud(handlers: HudHandlers): Hud {
 
   endTurn.onclick = handlers.onEndTurn;
   newGame.onclick = handlers.onNewGame;
+  el('bsv').onclick = () => handlers.onSave();
+  el('bld').onclick = () => handlers.onLoad();
   fitView.onclick = handlers.onFitView;
 
   const paneIds: Record<PaneSide, string> = { left: 'pane-left', right: 'pane-right', bottom: 'pane-bottom', top: 'pane-top' };
@@ -169,7 +173,7 @@ export function createHud(handlers: HudHandlers): Hud {
           .filter((w) => g.settings.supply && w.ammo >= 0)
           .map((w) => `${w.name}:${u.ammo[w.name] ?? 0}`)
           .join(' ');
-        b.textContent = `${def.name} HP${u.hp}/${def.hp}${ammoText ? ` ${ammoText}` : ''} @${tile ? `${tile.col},${tile.row}` : '?'} ${u.acted ? '行動済' : '未行動'}`;
+        b.textContent = `${def.name} HP${u.hp}/${def.hp} 燃料${u.fuel}/${def.fuel}${ammoText ? ` ${ammoText}` : ''} @${tile ? `${tile.col},${tile.row}` : '?'} ${u.acted ? '行動済' : '未行動'}`;
         b.onclick = () => handlers.onSelectUnit(u);
         unitTable.append(b);
       }
@@ -206,8 +210,18 @@ export function createHud(handlers: HudHandlers): Hud {
     },
     openPane,
     drawMinimap(g, viewport, world) {
+      // fill を除いた実ヘックスの範囲だけを全体図にする
+      let minCol = Infinity, minRow = Infinity, maxCol = -Infinity, maxRow = -Infinity;
+      for (const t of g.tiles.values()) {
+        if (t.terrain === 'fill') continue;
+        minCol = Math.min(minCol, t.col); maxCol = Math.max(maxCol, t.col);
+        minRow = Math.min(minRow, t.row); maxRow = Math.max(maxRow, t.row);
+      }
+      if (!Number.isFinite(minCol)) return;
+      const cols = maxCol - minCol + 1;
+      const rows = maxRow - minRow + 1;
       const W = 440;
-      const H = Math.max(80, Math.round((W * g.height) / Math.max(1, g.width)));
+      const H = Math.max(80, Math.round((W * rows) / cols));
       if (minimap.width !== W || minimap.height !== H) {
         minimap.width = W;
         minimap.height = H;
@@ -215,33 +229,34 @@ export function createHud(handlers: HudHandlers): Hud {
       const c = minimap.getContext('2d');
       if (!c) return;
       const theme = getTheme(g.settings.theme);
-      const cw = W / g.width;
-      const ch = H / g.height;
+      const cw = W / cols;
+      const ch = H / rows;
       c.fillStyle = theme.palette.bg;
       c.fillRect(0, 0, W, H);
       for (const t of g.tiles.values()) {
+        if (t.terrain === 'fill') continue;
         c.fillStyle = theme.palette[t.terrain];
-        c.fillRect(t.col * cw, t.row * ch, Math.ceil(cw), Math.ceil(ch));
+        c.fillRect((t.col - minCol) * cw, (t.row - minRow) * ch, Math.ceil(cw), Math.ceil(ch));
       }
       for (const town of g.towns) {
         c.fillStyle = town.owner === 'p' ? '#3f8fe0' : town.owner === 'e' ? '#e0483f' : '#e8e8e8';
         c.beginPath();
-        c.arc((town.col + 0.5) * cw, (town.row + 0.5) * ch, town.capital ? 3.4 : 2.2, 0, Math.PI * 2);
+        c.arc((town.col - minCol + 0.5) * cw, (town.row - minRow + 0.5) * ch, town.capital ? 3.4 : 2.2, 0, Math.PI * 2);
         c.fill();
       }
       for (const u of g.units) {
         if (u.hp <= 0) continue;
         const tile = [...g.tiles.values()].find((t) => t.x === u.x && t.y === u.y && t.z === u.z);
-        if (!tile) continue;
+        if (!tile || tile.terrain === 'fill') continue;
         c.fillStyle = u.side === 'p' ? '#1f6fb5' : '#c2392f';
-        c.fillRect(tile.col * cw + 0.5, tile.row * ch + 0.5, Math.max(2.4, cw - 1), Math.max(2.4, ch - 1));
+        c.fillRect((tile.col - minCol) * cw + 0.5, (tile.row - minRow) * ch + 0.5, Math.max(2.4, cw - 1), Math.max(2.4, ch - 1));
       }
       if (viewport && world.w > 0 && world.h > 0) {
         c.strokeStyle = '#ff2222';
         c.lineWidth = 2;
         c.strokeRect(
-          (viewport.x / world.w) * W,
-          (viewport.y / world.h) * H,
+          ((viewport.x - world.x) / world.w) * W,
+          ((viewport.y - world.y) / world.h) * H,
           (viewport.w / world.w) * W,
           (viewport.h / world.h) * H,
         );
