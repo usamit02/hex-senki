@@ -2,8 +2,8 @@ import Phaser from 'phaser';
 import { boardSize, fromPixel, key, toPixel } from './hex';
 import { inRange } from './rules';
 import { townAt, unitAt } from './state';
-import { TERRAINS } from './terrain';
-import type { Cube, Game, Tile } from './types';
+import { getTheme } from './themes';
+import type { Cube, Game, Tile, Unit } from './types';
 
 /**
  * 要件2: 描画は Phaser(メインスレッド)にアップグレード。
@@ -29,6 +29,8 @@ export interface UnitView {
 }
 
 let modelsActive = false;
+/** 読み込み済みモデルのキー(`${model}:${side}`)。駒ごとに3D表示できるか判定する */
+export const loadedModelKeys = new Set<string>();
 /** 3Dモデル層(render3d.ts)が使えるようになったら true にする。false の間は2Dの駒を描く */
 export function setModelsActive(v: boolean): void {
   modelsActive = v;
@@ -46,6 +48,15 @@ export interface Renderer {
   start(g: Game, cb: BoardCallbacks): void;
   draw(g: Game): void;
   fitView(): void;
+  /** 交戦アニメーション(両ユニットの中間に数秒表示) */
+  playBattleFx(a: Cube, d: Cube): void;
+  /** メイン画面の表示範囲(ワールド座標) */
+  getViewport(): { x: number; y: number; w: number; h: number } | null;
+  /** ワールド座標の中心へスクロールする(ミニマップ用) */
+  centerOnWorld(x: number, y: number): void;
+  /** ユニットを画面中央に寄せる(部隊表用) */
+  focusOn(u: Unit): void;
+  worldSize(g: Game): { w: number; h: number };
 }
 
 const ROAD_NATIONAL = 0xd94f30;
@@ -54,6 +65,16 @@ const RIVER_COLOR = 0x5b8fd6;
 const NEUTRAL = 0x8a8a8a;
 
 const hexToInt = (css: string): number => parseInt(css.slice(1), 16);
+
+/** rgba(...) を #rrggbb に寄せる(タイル模様色用) */
+function stripAlpha(css: string): string {
+  const m = css.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+  if (m) {
+    const to = (n: string) => Number(n).toString(16).padStart(2, '0');
+    return `#${to(m[1])}${to(m[2])}${to(m[3])}`;
+  }
+  return css;
+}
 
 function hexCorners(x: number, y: number, size: number, k = 1): Phaser.Types.Math.Vector2Like[] {
   const pts: Phaser.Types.Math.Vector2Like[] = [];
@@ -89,6 +110,7 @@ export const boardBridge: {
 class BoardScene extends Phaser.Scene {
   private gameRef: Game | null = null;
   private cb: BoardCallbacks | null = null;
+  private tileLayer!: Phaser.GameObjects.Container;
   private gTerrain!: Phaser.GameObjects.Graphics;
   private gLines!: Phaser.GameObjects.Graphics;
   private gHighlight!: Phaser.GameObjects.Graphics;
@@ -125,6 +147,133 @@ class BoardScene extends Phaser.Scene {
     return out;
   }
 
+  /** テーマ×地形のタイル画像を生成する(ユニットが見えにくくならないよう模様は控えめに) */
+  private ensureTileTextures(themeId: string): void {
+    const theme = getTheme(themeId as Game['settings']['theme']);
+    const size = HEX_SIZE;
+    const W = Math.ceil(Math.sqrt(3) * size) + 4;
+    const H = 2 * size + 4;
+    const cx = W / 2;
+    const cy = H / 2;
+    // 模様の配置を地形ごとに固定するための簡易乱数
+    const rng = (seed: number) => {
+      let s0 = seed;
+      return () => {
+        s0 = (s0 * 1103515245 + 12345) % 2147483648;
+        return s0 / 2147483648;
+      };
+    };
+    const terrains = Object.keys(theme.palette).filter((k) => ['plain', 'forest', 'mountain', 'water', 'marsh'].includes(k)) as Array<keyof typeof theme.palette>;
+    for (const terrain of terrains) {
+      const keyName = `tile_${themeId}_${terrain}`;
+      if (this.textures.exists(keyName)) continue;
+      const gr = this.add.graphics();
+      const pts = hexCorners(cx, cy, size, 0.99);
+      gr.fillStyle(hexToInt(theme.palette[terrain]), 1);
+      gr.fillPoints(pts, true);
+      const pat = hexToInt(stripAlpha(theme.palette.pattern));
+      const patAlt = hexToInt(stripAlpha(theme.palette.patternAlt));
+      const rnd = rng(terrain.length * 977 + themeId.length * 131);
+      if (terrain === 'plain') {
+        gr.fillStyle(pat, 0.5);
+        for (let i = 0; i < 7; i++) {
+          gr.fillCircle(cx + (rnd() - 0.5) * size * 1.2, cy + (rnd() - 0.5) * size * 1.4, 1.6);
+        }
+        gr.lineStyle(1.5, pat, 0.45);
+        for (let i = 0; i < 3; i++) {
+          const x = cx + (rnd() - 0.5) * size;
+          const y = cy + (rnd() - 0.5) * size * 1.2;
+          gr.lineBetween(x, y, x + 3, y - 5);
+        }
+      } else if (terrain === 'forest') {
+        for (let i = 0; i < 4; i++) {
+          const x = cx + (rnd() - 0.5) * size * 1.1;
+          const y = cy + (rnd() - 0.5) * size * 1.2;
+          gr.fillStyle(pat, 0.55);
+          gr.fillTriangle(x, y - 9, x - 6, y + 5, x + 6, y + 5);
+          gr.fillRect(x - 1, y + 5, 2, 4);
+        }
+      } else if (terrain === 'mountain') {
+        for (let i = 0; i < 2; i++) {
+          const x = cx + (i === 0 ? -size * 0.3 : size * 0.28);
+          const y = cy + (i === 0 ? -2 : 6);
+          gr.fillStyle(pat, 0.5);
+          gr.fillTriangle(x, y - 13, x - 11, y + 10, x + 11, y + 10);
+          gr.fillStyle(patAlt, 0.8);
+          gr.fillTriangle(x, y - 13, x - 4.5, y - 5, x + 4.5, y - 5);
+        }
+      } else if (terrain === 'water') {
+        gr.lineStyle(2, patAlt, 0.55);
+        for (let r = 0; r < 3; r++) {
+          const y = cy - size * 0.4 + r * size * 0.4;
+          for (let x0 = -2; x0 < 3; x0++) {
+            const x = cx + x0 * size * 0.32;
+            gr.lineBetween(x, y, x + size * 0.14, y - 3);
+            gr.lineBetween(x + size * 0.14, y - 3, x + size * 0.28, y);
+          }
+        }
+      } else if (terrain === 'marsh') {
+        gr.lineStyle(2, pat, 0.55);
+        for (let i = 0; i < 6; i++) {
+          const x = cx + (rnd() - 0.5) * size * 1.2;
+          const y = cy + (rnd() - 0.5) * size * 1.1;
+          gr.lineBetween(x, y + 6, x, y - 6);
+          gr.lineBetween(x, y - 6, x - 3, y - 10);
+          gr.lineBetween(x, y - 6, x + 3, y - 10);
+        }
+      }
+      gr.lineStyle(1, 0x14201a, 0.35);
+      gr.strokePoints(pts, true);
+      gr.generateTexture(keyName, W, H);
+      gr.destroy();
+    }
+  }
+
+  /** 交戦アニメーション: 両ユニットの中間に閃光と火花を数秒出す */
+  playBattleFx(a: Cube, d: Cube): void {
+    const pa = toPixel(a, HEX_SIZE);
+    const pb = toPixel(d, HEX_SIZE);
+    const mx = (pa.x + pb.x) / 2;
+    const my = (pa.y + pb.y) / 2;
+    const fx = this.add.container(mx, my).setDepth(8);
+    const gr = this.add.graphics();
+    gr.fillStyle(0xfff2b0, 0.95);
+    gr.fillCircle(0, 0, HEX_SIZE * 0.22);
+    gr.lineStyle(4, 0xff8c2e, 1);
+    gr.strokeCircle(0, 0, HEX_SIZE * 0.34);
+    gr.lineStyle(3, 0xffd23e, 1);
+    for (let i = 0; i < 8; i++) {
+      const ang = (Math.PI * 2 * i) / 8;
+      gr.lineBetween(Math.cos(ang) * HEX_SIZE * 0.3, Math.sin(ang) * HEX_SIZE * 0.3, Math.cos(ang) * HEX_SIZE * 0.55, Math.sin(ang) * HEX_SIZE * 0.55);
+    }
+    fx.add(gr);
+    this.tweens.add({
+      targets: fx, scale: 1.7, alpha: 0, duration: 1600, ease: 'Quad.easeOut',
+      onComplete: () => fx.destroy(),
+    });
+    this.cameras.main.shake(130, 0.0016);
+  }
+
+  getViewport(): { x: number; y: number; w: number; h: number } {
+    const wv = this.cameras.main.worldView;
+    return { x: wv.x, y: wv.y, w: wv.width, h: wv.height };
+  }
+
+  centerOnWorld(x: number, y: number): void {
+    const g = this.gameRef;
+    if (!g) return;
+    const { w, h } = boardSize(g.width, g.height, HEX_SIZE);
+    this.cameras.main.centerOn(
+      Phaser.Math.Clamp(x, 0, w),
+      Phaser.Math.Clamp(y, 0, h),
+    );
+  }
+
+  focusOn(u: Unit): void {
+    const p = toPixel(u, HEX_SIZE);
+    this.centerOnWorld(p.x, p.y);
+  }
+
   /** 新規ゲーム用: Scene は作り直さず、静的レイヤーだけ再構築して全体表示に戻す */
   reset(g: Game): void {
     this.gameRef = g;
@@ -138,8 +287,9 @@ class BoardScene extends Phaser.Scene {
     this.cb = boardBridge.cb;
     boardBridge.scene = this;
     this.input.mouse?.disableContextMenu();
-    this.gTerrain = this.add.graphics().setDepth(0);
-    this.gLines = this.add.graphics().setDepth(1);
+    this.tileLayer = this.add.container(0, 0).setDepth(0);
+    this.gTerrain = this.add.graphics().setDepth(1);
+    this.gLines = this.add.graphics().setDepth(2);
     this.glyphLayer = this.add.container(0, 0).setDepth(2);
     this.gTowns = this.add.graphics().setDepth(3);
     this.gHighlight = this.add.graphics().setDepth(4);
@@ -240,41 +390,27 @@ class BoardScene extends Phaser.Scene {
 
   private buildStatic(g: Game): void {
     const size = HEX_SIZE;
-    // --- 地形 ---
+    const theme = getTheme(g.settings.theme);
+    this.cameras.main.setBackgroundColor(theme.palette.bg);
+    this.ensureTileTextures(g.settings.theme);
+    // --- 地形タイル画像(色塗りつぶしの代わり)。道路・河川はこの上に重ねる ---
+    this.tileLayer.removeAll(true);
+    for (const t of g.tiles.values()) {
+      if (t.terrain === 'fill') continue; // fill は表示しない
+      const { x, y } = toPixel(t, size);
+      this.tileLayer.add(this.add.image(x, y, `tile_${g.settings.theme}_${t.terrain}`));
+    }
+    // 拠点の所有リング(タイルの上に細く描く)
     const gt = this.gTerrain;
     gt.clear();
     for (const t of g.tiles.values()) {
+      if (!t.city) continue;
       const { x, y } = toPixel(t, size);
-      const pts = hexCorners(x, y, size, 0.97);
-      gt.fillStyle(hexToInt(TERRAINS[t.terrain].color), 1);
-      gt.fillPoints(pts, true);
-      gt.lineStyle(1, 0x283c32, 0.45);
-      gt.strokePoints(pts, true);
-      if (t.city) {
-        const color = t.city.owner === 'p' ? 0x1f6fb5 : t.city.owner === 'e' ? 0xc2392f : NEUTRAL;
-        gt.lineStyle(3, color, 1);
-        gt.strokePoints(hexCorners(x, y, size, 0.8), true);
-      }
+      const color = t.city.owner === 'p' ? 0x1f6fb5 : t.city.owner === 'e' ? 0xc2392f : NEUTRAL;
+      gt.lineStyle(3, color, 1);
+      gt.strokePoints(hexCorners(x, y, size, 0.8), true);
     }
-    // 地形文字(ヘックス数が多い場合は省略して軽量化)
     this.glyphLayer.removeAll(true);
-    if (g.tiles.size <= 4000) {
-      for (const t of g.tiles.values()) {
-        const glyph = TERRAINS[t.terrain].glyph;
-        if (!glyph) continue;
-        const { x, y } = toPixel(t, size);
-        const txt = this.add.text(x, y + size * 0.52, glyph, {
-          fontSize: '12px', color: 'rgba(30,50,30,0.65)',
-        }).setOrigin(0.5);
-        this.glyphLayer.add(txt);
-        if (t.city) {
-          const cTxt = this.add.text(x, y - size * 0.55, t.city.capital ? '城' : '村', {
-            fontSize: '12px', color: '#1c2530', fontStyle: 'bold',
-          }).setOrigin(0.5);
-          this.glyphLayer.add(cTxt);
-        }
-      }
-    }
 
     // --- 道路・河川(編集アプリと同じ接続パターン) ---
     const gl = this.gLines;
@@ -402,7 +538,8 @@ class BoardScene extends Phaser.Scene {
       // 影(3Dモデル表示時も共通)
       circle.fillStyle(0x000000, 0.28);
       circle.fillEllipse(0, size * 0.42, size * 0.82, size * 0.3);
-      if (!modelsActive) {
+      const useModel = modelsActive && loadedModelKeys.has(`${g.defs[u.kind].model}:${u.side}`);
+      if (!useModel) {
         circle.fillStyle(u.side === 'p' ? player : enemy, 1);
         circle.fillCircle(0, 0, size * 0.5);
       }
@@ -414,7 +551,7 @@ class BoardScene extends Phaser.Scene {
         fontSize: `${Math.round(size * 0.32)}px`, color: '#ffffff', fontStyle: 'bold',
         backgroundColor: 'rgba(20,26,34,0.55)', padding: { x: 2, y: 0 },
       }).setOrigin(0.5);
-      if (modelsActive) {
+      if (useModel) {
         c.add([circle, hp]);
       } else {
         const name = this.add.text(0, -1, g.defs[u.kind].short, {
@@ -459,6 +596,21 @@ export function createRenderer(parent: HTMLElement): Renderer {
     },
     fitView() {
       boardBridge.scene?.fitView();
+    },
+    playBattleFx(a, d) {
+      boardBridge.scene?.playBattleFx(a, d);
+    },
+    getViewport() {
+      return boardBridge.scene ? boardBridge.scene.getViewport() : null;
+    },
+    centerOnWorld(x, y) {
+      boardBridge.scene?.centerOnWorld(x, y);
+    },
+    focusOn(u) {
+      boardBridge.scene?.focusOn(u);
+    },
+    worldSize(g) {
+      return boardSize(g.width, g.height, HEX_SIZE);
     },
   };
 }

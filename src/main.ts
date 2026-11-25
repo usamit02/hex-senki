@@ -1,15 +1,20 @@
 import './style.css';
 import { enemyAct } from './ai';
 import { AiWorkerPool } from './ai/pool';
-import { loadMap, loadUnitDefs } from './data';
-import { confirmSelected, describeHex, handleHexClick, undoSelectedMove, type InputDeps } from './input';
+import { loadMap, loadThemeUnitDefs } from './data';
+import { confirmSelected, describeHex, describeUnit, handleHexClick, undoSelectedMove, type InputDeps } from './input';
 import { createRenderer, type BoardCallbacks } from './render';
 import { UnitModelLayer } from './render3d';
 import { produce, settleCaptures } from './rules';
 import { createGame, producibleHexKeys, tileAt, unitAt } from './state';
+import { showSettingsScreen } from './settings';
+import { playAttackSfx, playMoveSfx } from './sfx';
+import { getTheme } from './themes';
+import { validateUnitDefs } from './validate';
+import { DEFAULT_SETTINGS, type GameSettings } from './types';
 import { beginEnemyTurn, finishEnemyTurn } from './turn';
 import { key } from './hex';
-import type { Game, MapData, UnitDefs } from './types';
+import type { Game, MapData, ThemeId, UnitDefs } from './types';
 import { createHud, type ContextAction } from './ui';
 
 const ENEMY_START_DELAY_MS = 300;
@@ -30,8 +35,11 @@ modelLayer.onAvailable = (ok) => {
 };
 
 let game: Game | null = null;
-let defs: UnitDefs;
 let mapData: MapData;
+/** public/units.json から読んだテーマ別ユニット定義(あれば themes.ts の組み込みより優先) */
+let fileDefs: Partial<Record<ThemeId, UnitDefs>> = {};
+let lastSettings: GameSettings = DEFAULT_SETTINGS;
+let lastInfoHtml = '';
 
 const current = (): Game => {
   if (!game) throw new Error('ゲームがまだ始まっていません');
@@ -40,15 +48,57 @@ const current = (): Game => {
 
 function refresh(): void {
   if (!game) return;
-  renderer.draw(game);
-  hud.update(game);
+  const g = game;
+  // 交戦演出と効果音(rules が積んだイベントをここで消費する)
+  if (g.pendingFx) {
+    renderer.playBattleFx(g.pendingFx.a, g.pendingFx.d);
+    playAttackSfx(g.pendingFx.sfx);
+    g.pendingFx = null;
+  }
+  if (g.pendingMoveSfx) {
+    playMoveSfx(g.pendingMoveSfx);
+    g.pendingMoveSfx = null;
+  }
+  renderer.draw(g);
+  hud.update(g);
+  // 左ペイン: ユニット選択中はユニット情報、それ以外は選択中ヘックスの情報
+  const infoHtml = g.selected
+    ? describeUnit(g, g.selected)
+    : g.selectedHex
+      ? describeHex(g, g.selectedHex)
+      : 'ヘックスやユニットをクリックすると情報が表示されます。';
+  if (infoHtml !== lastInfoHtml) {
+    lastInfoHtml = infoHtml;
+    hud.showInfo(infoHtml);
+  }
+  hud.drawMinimap(g, renderer.getViewport(), renderer.worldSize(g));
+}
+
+function startGame(settings: GameSettings): boolean {
+  lastSettings = settings;
+  try {
+    const theme = getTheme(settings.theme);
+    const defs = fileDefs[settings.theme] ?? theme.defs;
+    validateUnitDefs(defs);
+    game = createGame(defs, mapData, settings);
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    hud.showError(`ゲームを開始できませんでした: ${detail}`);
+    return false;
+  }
+  hud.setup(game);
+  renderer.start(game, boardCallbacks);
+  // 3Dモデルは現代テーマのみ(他テーマは2D駒表示)
+  if (settings.theme === 'modern') {
+    modelLayer.start(() => game);
+    void modelLayer.loadModels(game.defs);
+  }
+  refresh();
+  return true;
 }
 
 function newGame(): void {
-  game = createGame(defs, mapData);
-  hud.setup(game);
-  renderer.start(game, boardCallbacks);
-  hud.update(game);
+  showSettingsScreen(lastSettings, startGame);
 }
 
 function endTurn(): void {
@@ -89,6 +139,20 @@ const hud = createHud({
   onEndTurn: endTurn,
   onNewGame: newGame,
   onFitView: () => renderer.fitView(),
+  onSelectUnit: (u) => {
+    const g = current();
+    g.selected = u;
+    g.selectedHex = tileAt(g, u) ?? null;
+    g.reach = null;
+    renderer.focusOn(u);
+    refresh();
+  },
+  onMinimapPan: (fx, fy) => {
+    const g = current();
+    const { w, h } = renderer.worldSize(g);
+    renderer.centerOnWorld(fx * w, fy * h);
+    hud.drawMinimap(g, renderer.getViewport(), renderer.worldSize(g));
+  },
 });
 
 const inputDeps: InputDeps = { getGame: current, refresh };
@@ -108,7 +172,13 @@ const boardCallbacks: BoardCallbacks = {
       return;
     }
     const t = tileAt(g, c);
-    if (!t) return;
+    if (!t || t.terrain === 'fill') {
+      hud.showContext(screen.x, screen.y, 'マップの外です', [
+        { label: '全体表示', run: () => renderer.fitView() },
+        { label: 'ターン終了', disabled: g.busy || g.over, run: endTurn },
+      ]);
+      return;
+    }
     g.selectedHex = t;
     const html = describeHex(g, t);
     hud.showInfo(html);
@@ -143,10 +213,10 @@ matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refresh);
 
 async function boot(): Promise<void> {
   try {
-    [defs, mapData] = await Promise.all([loadUnitDefs(), loadMap()]);
-    newGame();
-    modelLayer.start(() => game);
-    void modelLayer.loadModels(defs);
+    [mapData, fileDefs] = await Promise.all([loadMap(), loadThemeUnitDefs()]);
+    // 起動時は設定画面を出さず、現代戦(既定設定)でそのまま開始する。
+    // 設定画面は「新規ゲーム」を押したときにだけ表示する
+    startGame(DEFAULT_SETTINGS);
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     hud.showError(`データの読み込みに失敗しました(${detail})。`);

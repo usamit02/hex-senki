@@ -1,5 +1,5 @@
 import { distance, equals } from './hex';
-import { attack, canProduce, inRange, moveUnit, produce, reachable, tryCapture } from './rules';
+import { attack, canProduce, inRange, moveUnit, produce, reachable, resupplyFromAdjacentSupply, tryCapture } from './rules';
 import { capitalOf, liveUnits, producibleHexKeys } from './state';
 import { TERRAINS } from './terrain';
 import type { Cube, Game, Tile, Unit } from './types';
@@ -32,6 +32,7 @@ export const enemyRecruit = enemyProduce;
 
 /** 敵の駒1体の行動: 最も近い味方に向かって移動し、攻撃できれば最も弱い相手を攻撃する */
 export function enemyAct(g: Game, u: Unit): void {
+  resupplyFromAdjacentSupply(g, u); // 移動前: 補給ユニット隣接で残弾回復
   const def = g.defs[u.kind];
   const foes = liveUnits(g, 'p');
   const pCap = capitalOf(g, 'p');
@@ -51,8 +52,10 @@ export function enemyAct(g: Game, u: Unit): void {
     // 占領できるのは歩兵だけなので、towns への移動ボーナスは歩兵のみ
     const town = g.towns.find((tw) => tw.hexId === t.id);
     if (def.canCapture && town && town.owner !== 'e') score += 5;
-    if (foes.some((f) => { const d = distance(t, f); return d >= def.minRange && d <= def.range; })) score += 5;
-    if (def.minRange > 1 && foes.some((f) => distance(t, f) === 1)) score -= 4;
+    const maxRange = Math.max(1, ...def.weapons.map((w) => w.range));
+    const minRange = Math.min(1, ...def.weapons.map((w) => w.minRange));
+    if (foes.some((f) => { const d = distance(t, f); return d >= minRange && d <= maxRange; })) score += 5;
+    if (minRange > 1 && foes.some((f) => distance(t, f) === 1)) score -= 4;
     if (score > bestScore) {
       bestScore = score;
       best = t;

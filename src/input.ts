@@ -1,8 +1,9 @@
 import { key } from './hex';
-import { attack, confirmUnit, inRange, moveUnit, reachable, undoMove } from './rules';
+import { attack, confirmUnit, inRange, moveUnit, reachable, resupplyFromAdjacentSupply, undoMove } from './rules';
 import { INCOME_POPULATION_UNIT, linesAt, producibleHexKeys, tileAt, townAt, unitAt } from './state';
 import { TERRAINS } from './terrain';
-import type { Cube, Game, Tile } from './types';
+import { getTheme } from './themes';
+import type { Cube, Game, Tile, Unit } from './types';
 
 export interface InputDeps {
   getGame(): Game;
@@ -15,6 +16,14 @@ export function handleHexClick({ getGame, refresh }: InputDeps, h: Cube): void {
   if (g.over || g.busy) return;
   const t = tileAt(g, h);
   if (!t) {
+    g.selected = null;
+    g.selectedHex = null;
+    g.reach = null;
+    refresh();
+    return;
+  }
+  if (t.terrain === 'fill') {
+    // fill(埋め草)はマップ外と同じ扱い: 選択しない
     g.selected = null;
     g.selectedHex = null;
     g.reach = null;
@@ -50,6 +59,7 @@ export function handleHexClick({ getGame, refresh }: InputDeps, h: Cube): void {
   }
 
   if (u && u.side === 'p' && !(u.moved && u.acted)) {
+    resupplyFromAdjacentSupply(g, u); // 移動前: 補給ユニットに隣接していれば残弾回復
     g.selected = u;
     g.reach = u.moved ? null : reachable(g, u);
     g.message = `${g.defs[u.kind].name}を選択。移動先か攻撃対象をクリック。もう一度クリックすると行動を確定。`;
@@ -94,13 +104,13 @@ export function describeHex(g: Game, t: Tile): string {
     lines.push(`<strong>🏙 ${esc(town.name)}${town.capital ? '(首都)' : ''}</strong>`);
     lines.push(`人口: ${town.population.toLocaleString('ja-JP')}人 / 占領: ${ownerName(town.owner)}`);
     lines.push(`収入: +${Math.max(1, Math.floor(town.population / INCOME_POPULATION_UNIT))}/ターン(占領時)`);
-    lines.push('占領できるのは歩兵のみ');
+    lines.push('占領できるのは占領可能なユニットのみ');
   }
   const u = unitAt(g, t);
   if (u) {
     const def = g.defs[u.kind];
     lines.push(`<strong>${u.side === 'p' ? '味方' : '敵'}: ${esc(def.name)}(${def.domain === 'air' ? '航空' : '地上'})</strong>`);
-    lines.push(`HP ${u.hp}/${def.hp} / 移動 ${def.move} / 攻撃 ${def.attack} / 防御 ${def.defense} / 射程 ${def.minRange}〜${def.range}`);
+    lines.push(`HP ${u.hp}/${def.hp} / 移動 ${def.move} / 防御 ${def.defense} / 武装 ${def.weapons.map((w) => w.name).join('・') || 'なし'}`);
     if (u.side === 'p') lines.push(u.acted ? '行動済み' : u.moved ? '移動済み(攻撃・確定が可能)' : '未行動');
   }
   const terrain = TERRAINS[t.terrain];
@@ -114,6 +124,30 @@ export function describeHex(g: Game, t: Tile): string {
   }
   if (!u && producibleHexKeys(g, 'p').has(key(t))) {
     lines.push('<strong>生産可能ヘックス</strong>(下のメニューから生産)');
+  }
+  return lines.join('<br>');
+}
+
+/** ユニット情報(左ペイン表示用)。武装と残弾も出す */
+export function describeUnit(g: Game, u: Unit): string {
+  const def = g.defs[u.kind];
+  const t = tileAt(g, u);
+  const theme = getTheme(g.settings.theme);
+  const lines = [
+    `<b>${def.name}</b>(${u.side === 'p' ? '味方' : '敵'})`,
+    `HP ${u.hp}/${def.hp} / 移動 ${def.move} / 防御 ${def.defense} / ${def.domain === 'air' ? '航空' : '地上'}`,
+    `位置: col ${t?.col ?? '?'} / row ${t?.row ?? '?'}(${t ? theme.terrainLabels[t.terrain] : '?'})`,
+    `状態: ${u.acted ? '行動済み' : u.moved ? '移動済み(攻撃・確定が可能)' : '未行動'}`,
+  ];
+  if (def.canCapture) lines.push('このユニットは town を占領できます。');
+  if (def.isSupply) lines.push('補給ユニット: 隣接する味方の残弾を回復します。');
+  if (def.weapons.length === 0) {
+    lines.push('武装なし(攻撃できません)');
+  } else {
+    for (const w of def.weapons) {
+      const ammo = !g.settings.supply || w.ammo < 0 ? '∞' : `${u.ammo[w.name] ?? 0}/${w.ammo}`;
+      lines.push(`武装: ${w.name}(威力${w.power} 射程${w.minRange}〜${w.range} 残弾${ammo})`);
+    }
   }
   return lines.join('<br>');
 }

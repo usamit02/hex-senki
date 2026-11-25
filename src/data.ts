@@ -1,4 +1,4 @@
-import type { HexMapData, MapConfig, MapData, UnitDefs } from './types';
+import type { HexMapData, MapConfig, MapData, ThemeId, UnitDefs } from './types';
 import { validateUnitDefs } from './validate';
 
 const base = import.meta.env.BASE_URL;
@@ -17,6 +17,37 @@ export async function loadUnitDefs(): Promise<UnitDefs> {
   const defs = await fetchJson<UnitDefs>('units.json');
   validateUnitDefs(defs);
   return defs;
+}
+
+/**
+ * テーマ別ユニット定義を public/units.json から読む(エンドユーザーが別ツールで編集する想定)。
+ * 形式: { "modern": {…}, "fantasy": {…}, "sengoku": {…}, "robot": {…} }
+ * 旧形式(テーマキーの無い単一の定義集)は modern の定義として扱う。
+ * ファイルが無い/壊れている場合は空を返し、呼び出し側が themes.ts の組み込み定義にフォールバックする。
+ */
+export async function loadThemeUnitDefs(): Promise<Partial<Record<ThemeId, UnitDefs>>> {
+  try {
+    const raw = await fetchJson<Record<string, unknown>>('units.json');
+    const out: Partial<Record<ThemeId, UnitDefs>> = {};
+    const themeIds: ThemeId[] = ['modern', 'fantasy', 'sengoku', 'robot'];
+    const hasThemeKeys = themeIds.some((id) => raw[id] && typeof raw[id] === 'object');
+    if (hasThemeKeys) {
+      for (const id of themeIds) {
+        const defs = raw[id] as UnitDefs | undefined;
+        if (defs) {
+          validateUnitDefs(defs);
+          out[id] = defs;
+        }
+      }
+    } else {
+      const defs = raw as unknown as UnitDefs;
+      validateUnitDefs(defs);
+      out.modern = defs;
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 export async function loadMap(): Promise<MapData> {

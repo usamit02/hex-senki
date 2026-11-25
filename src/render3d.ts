@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { getUnitViews, setModelsActive, type UnitView } from './render';
+import { getUnitViews, loadedModelKeys, setModelsActive, type UnitView } from './render';
 import type { Game, Side, Unit, UnitDefs } from './types';
 
 /**
@@ -42,7 +42,7 @@ export class UnitModelLayer {
   /** 全ユニット種×陣営のモデルを読み込む。1つでも成功したら onAvailable(true) */
   async loadModels(defs: UnitDefs): Promise<void> {
     const jobs: Array<Promise<void>> = [];
-    const kinds = new Set(Object.values(defs).map((d) => d.model));
+    const kinds = new Set(Object.values(defs).map((d) => d.model).filter((m) => m !== ''));
     for (const model of kinds) {
       for (const side of ['p', 'e'] as Side[]) {
         const color = side === 'p' ? 'blue' : 'red';
@@ -50,6 +50,7 @@ export class UnitModelLayer {
         jobs.push(
           this.loader.loadAsync(url).then((gltf) => {
             this.templates.set(`${model}:${side}`, normalize(gltf.scene));
+            loadedModelKeys.add(`${model}:${side}`);
           }).catch(() => {
             // そのモデルは2D表示のまま
           }),

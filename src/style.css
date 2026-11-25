@@ -48,3 +48,28 @@ details{font-size:.85rem}
 
 /* 3Dモデル表示層(Phaser の上、ペインの下。操作は受けない) */
 #models-layer{position:fixed;inset:0;z-index:5;pointer-events:none;width:100%;height:100%}
+
+/* 上ペイン(部隊表)と上タブ */
+.edge-top{top:0;left:50%;transform:translateX(-50%);border-radius:0 0 8px 8px;padding:4px 14px}
+.pane-top{top:0;left:50%;transform:translate(-50%,-105%);width:min(680px,94vw);max-height:46vh}
+.pane-top.open{transform:translate(-50%,0)}
+#unit-table{display:flex;flex-direction:column;gap:4px}
+.unit-pick{text-align:left;font-size:.85rem;padding:5px 8px}
+.unit-pick.selected{outline:2px solid #22d3ee}
+/* ミニマップ */
+.mm-title{margin-top:14px}
+#minimap{width:100%;height:auto;display:block;background:#111;border:1px solid rgba(255,255,255,.25);border-radius:6px;touch-action:none;cursor:crosshair}
+/* ゲーム設定画面 */
+#settings-screen{position:fixed;inset:0;z-index:60;background:rgba(8,12,18,.88);display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 12px}
+#settings-screen[hidden]{display:none}
+.settings-card{background:#1c2634;color:#eef2f6;border-radius:12px;padding:20px 22px;width:min(620px,94vw);box-shadow:0 12px 40px rgba(0,0,0,.5)}
+.settings-card h1{font-size:1.25rem;margin:0 0 14px}
+.settings-card fieldset{border:1px solid rgba(255,255,255,.25);border-radius:8px;margin:0 0 12px;padding:10px 12px}
+.settings-card legend{padding:0 6px;font-weight:700}
+.settings-card label{display:block;margin:6px 0;font-size:.95rem}
+.settings-card input[type="number"]{width:110px}
+#set-themes{display:flex;flex-direction:column;gap:6px}
+.theme-pick{display:flex;gap:8px;align-items:baseline;text-align:left;width:100%;padding:8px 10px}
+.theme-pick.selected{outline:2px solid #22d3ee}
+.theme-pick small{opacity:.75}
+button.big{width:100%;padding:10px;font-size:1.05rem}

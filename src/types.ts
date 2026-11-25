@@ -1,19 +1,18 @@
 /** 陣営: p = プレイヤー, e = 敵(CPU) */
 export type Side = 'p' | 'e';
 
-export type TerrainKind = 'plain' | 'forest' | 'mountain' | 'water' | 'marsh';
+export type TerrainKind = 'plain' | 'forest' | 'mountain' | 'water' | 'marsh' | 'fill';
 
 /** 要件1: マップ上限と部隊上限 */
-export const MAX_MAP_COLS = 100;
-export const MAX_MAP_ROWS = 100;
+export const MAX_MAP_COLS = 128;
+export const MAX_MAP_ROWS = 128;
 export const MAX_UNITS_PER_SIDE = 100;
 
 /** ユニットの移動区分: 地上は地形の影響を受け、航空は受けない */
 export type Domain = 'ground' | 'air';
 
-/** 相性(3すくみ等)の区分。vs のキーになる */
-export type Category = 'tank' | 'sam' | 'jet' | 'heli' | 'infantry';
-export const CATEGORIES: readonly Category[] = ['tank', 'sam', 'jet', 'heli', 'infantry'];
+/** 相性(3すくみ等)の区分。テーマごとに異なる文字列で、vs のキーになる */
+export type Category = string;
 
 /** キューブ座標。常に x + y + z = 0 が成り立つ */
 export interface Cube {
@@ -22,29 +21,88 @@ export interface Cube {
   z: number;
 }
 
-/** units.json の1種類分の定義 */
+/** 武装1種分。残弾はユニットごとに管理し、0になるとその武装は使えない(ammo: -1 は無制限) */
+export interface WeaponDef {
+  name: string;
+  /** 攻撃力 */
+  power: number;
+  minRange: number;
+  range: number;
+  /** 最大残弾。-1 は無制限 */
+  ammo: number;
+  /** 相手カテゴリごとの攻撃倍率(省略時は 1) */
+  vs?: Record<string, number>;
+  /** 攻撃効果音の種類(sfx.ts のキー) */
+  sfx: string;
+}
+
+/** ユニット1種類分の定義(テーマごとに themes.ts で定義) */
 export interface UnitDef {
   name: string;
   /** 盤面の駒に表示する短い文字 */
   short: string;
   hp: number;
   move: number;
-  attack: number;
   /** 防御力(受けるダメージから差し引く) */
   defense: number;
-  minRange: number;
-  range: number;
   cost: number;
   domain: Domain;
   category: Category;
-  /** 対応する3Dモデル(unit_models のファイル名の元: tank / sam / jet / heli / infantry) */
+  /** 対応する3Dモデル(現代テーマのみ: tank / sam / jet / heli / infantry / supply) */
   model: string;
-  /** towns を占領できるか(歩兵のみ true) */
+  /** towns を占領できるか */
   canCapture: boolean;
-  /** 相手カテゴリごとの攻撃倍率(3すくみ: 戦車>対空ミサイル>飛行機>戦車) */
-  vs: Record<Category, number>;
+  /** 補給ユニットか(隣接した味方の残弾を回復する) */
+  isSupply?: boolean;
+  /** 武装(複数可)。空なら攻撃できない */
+  weapons: WeaponDef[];
+  /** 移動効果音の種類(sfx.ts のキー) */
+  moveSfx: string;
+  /** 地形ごとの移動コスト上書き(テーマ・兵種固有の移動パターン) */
+  terrainCosts?: Partial<Record<TerrainKind, number>>;
 }
 export type UnitDefs = Record<string, UnitDef>;
+
+/** テーマ(舞台設定)のID */
+export type ThemeId = 'modern' | 'fantasy' | 'sengoku' | 'robot';
+
+/** ゲーム設定画面で決める条件 */
+export interface GameSettings {
+  theme: ThemeId;
+  /** 初期資金(null なら map.json の値) */
+  gold: number | null;
+  /** 収入倍率 */
+  incomeMul: number;
+  /** 部隊上限 */
+  maxUnits: number;
+  /** ZOC(敵に隣接したら移動終了)を使う */
+  zoc: boolean;
+  /** 補給(残弾の消費と回復)を使う。false なら残弾無制限 */
+  supply: boolean;
+  /** 生産できる */
+  production: boolean;
+  /** 反撃する */
+  counter: boolean;
+}
+
+export const DEFAULT_SETTINGS: GameSettings = {
+  theme: 'modern',
+  gold: null,
+  incomeMul: 1,
+  maxUnits: MAX_UNITS_PER_SIDE,
+  zoc: false,
+  supply: true,
+  production: true,
+  counter: true,
+};
+
+/** 交戦アニメーション・効果音用に rules が積むイベント */
+export interface BattleFx {
+  a: Cube;
+  d: Cube;
+  sfx: string;
+  id: number;
+}
 
 /** hex.json の1マス分 */
 export interface HexData {
@@ -148,6 +206,8 @@ export interface Unit extends Cube {
   side: Side;
   kind: string;
   hp: number;
+  /** 武装ごとの残弾(武装名 -> 残り)。無制限の武装は -1 */
+  ammo: Record<string, number>;
   moved: boolean;
   acted: boolean;
   /** 移動取り消し用: 移動前の位置と、移動先の拠点・towns の元の持ち主 */
@@ -156,6 +216,7 @@ export interface Unit extends Cube {
 
 export interface Game {
   defs: UnitDefs;
+  settings: GameSettings;
   width: number;
   height: number;
   tiles: Map<string, Tile>;
@@ -173,4 +234,9 @@ export interface Game {
   /** 左クリックで選択中のヘックス(ユニットの有無によらず保持する) */
   selectedHex: Tile | null;
   reach: Map<string, number> | null;
+  /** 表示待ちの交戦演出(attack が積み、画面側が消費する) */
+  pendingFx: BattleFx | null;
+  /** 表示待ちの移動効果音(moveUnit が積む) */
+  pendingMoveSfx: string | null;
+  fxSeq: number;
 }

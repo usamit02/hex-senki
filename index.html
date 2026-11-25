@@ -18,11 +18,21 @@
   <button id="tab-left" class="edge-tab edge-left" title="情報ペイン">情報</button>
   <button id="tab-right" class="edge-tab edge-right" title="生産ペイン">生産</button>
   <button id="tab-bottom" class="edge-tab edge-bottom" title="ログ・操作ペイン">操作</button>
+  <button id="tab-top" class="edge-tab edge-top" title="部隊表ペイン">部隊表</button>
 
-  <!-- 左ペイン: 選択中・ヘックス情報 -->
+  <!-- 左ペイン: 選択中情報 + 全体図 -->
   <aside id="pane-left" class="pane pane-left">
     <h2>情報</h2>
-    <div id="info">ヘックスを右クリックすると、都市・部隊・地形の情報が表示されます。</div>
+    <div id="info">ヘックスやユニットをクリックすると情報が表示されます。</div>
+    <h2 class="mm-title">全体図</h2>
+    <canvas id="minimap" width="440" height="200"></canvas>
+    <p class="note">赤枠がメイン画面の表示範囲です。赤枠をドラッグするとメイン画面がスクロールします。</p>
+  </aside>
+
+  <!-- 上ペイン: 部隊表 -->
+  <aside id="pane-top" class="pane pane-top">
+    <h2>部隊表</h2>
+    <div id="unit-table"></div>
   </aside>
 
   <!-- 右ペイン: 生産 -->
@@ -43,7 +53,7 @@
     </div>
     <details>
       <summary>遊び方</summary>
-      <p>青があなたの軍です。自分の駒をクリックして選び、光ったマスへ移動、赤い枠の敵をクリックして攻撃します。ホイールで拡大/縮小、ドラッグでスクロール、矢印キー/WASDでも移動できます。生産は生産可能ヘックスの右クリックメニューから行います。</p><p>相性: 戦車＞対空ミサイル＞戦闘機＞戦車 の3すくみ。歩兵は弱い代わりに唯一 towns を占領でき、占領した towns の人口に応じて毎ターン資金が増えます。地上ユニットは地形の移動コストと防御を受けますが、航空ユニット(戦闘機・ヘリ)は地形を無視します。</p>
+      <p>青があなたの軍です。自分の駒をクリックして選び、光ったマスへ移動、赤い枠の敵をクリックして攻撃します。ホイールで拡大/縮小、ドラッグでスクロール、矢印キー/WASDでも移動できます。生産は生産可能ヘックスの右クリックメニューから行います。</p><p>ユニットには複数の武装と残弾があり、戦闘ごとに残弾が減ります(補給OFF時は無制限)。占領済み town 上でターン開始を迎えるとHPと残弾が全回復し、補給ユニットの隣接でも残弾が回復します。占領は歩兵系ユニットのみで、town 上で行動を終えた時点で確定します。</p>
       <p>ヘックスを右クリックすると情報とコマンドのメニューが出ます。都市アイコンは hex.json の towns の情報です。道路・河川は編集アプリと同じく「中心→辺の中点→中心」で結ばれます。</p>
       <p>選択した駒をもう一度クリックすると行動を確定します。確定前なら右クリックメニューから移動を取り消せます。</p>
     </details>
@@ -51,6 +61,43 @@
 
   <!-- 右クリックメニュー -->
   <div id="ctx" hidden></div>
+
+  <!-- ゲーム設定画面(開始時と新規ゲーム時に表示) -->
+  <div id="settings-screen" hidden>
+    <div class="settings-card">
+      <h1>ヘックス戦記 — ゲーム設定</h1>
+      <fieldset>
+        <legend>舞台設定</legend>
+        <div id="set-themes"></div>
+      </fieldset>
+      <fieldset>
+        <legend>ゲーム条件</legend>
+        <label>初期資金 <input id="set-gold" type="number" min="0" max="9999" placeholder="マップ既定"> (空欄ならマップ既定)</label>
+        <label>収入倍率
+          <select id="set-income">
+            <option value="0.5">×0.5</option>
+            <option value="1" selected>×1</option>
+            <option value="2">×2</option>
+          </select>
+        </label>
+        <label>部隊上限
+          <select id="set-maxunits">
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100" selected>100</option>
+          </select>
+        </label>
+      </fieldset>
+      <fieldset>
+        <legend>ルール</legend>
+        <label><input id="set-zoc" type="checkbox"> ZOC(敵に隣接したヘックスに入ると移動終了)</label>
+        <label><input id="set-supply" type="checkbox" checked> 補給(残弾の消費と回復)</label>
+        <label><input id="set-production" type="checkbox" checked> 生産できる</label>
+        <label><input id="set-counter" type="checkbox" checked> 反撃する</label>
+      </fieldset>
+      <button id="set-start" class="go big">ゲーム開始</button>
+    </div>
+  </div>
 
 <script type="module" src="/src/main.ts"></script>
 </body>

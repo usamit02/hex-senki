@@ -4,8 +4,10 @@ import {
   MAX_MAP_COLS,
   MAX_MAP_ROWS,
   MAX_UNITS_PER_SIDE,
+  DEFAULT_SETTINGS,
   type Cube,
   type Game,
+  type GameSettings,
   type LineData,
   type LineFeature,
   type MapData,
@@ -46,13 +48,40 @@ export const ownedTowns = (g: Game, side: Side): Town[] => g.towns.filter((t) =>
 
 /** 1ターンの収入: 占領済み towns の人口に応じて増える */
 export function income(g: Game, side: Side): number {
+  let base: number;
   if (g.towns.length > 0) {
-    return ownedTowns(g, side).reduce(
+    base = ownedTowns(g, side).reduce(
       (sum, t) => sum + Math.max(1, Math.floor(t.population / INCOME_POPULATION_UNIT)),
       0,
     );
+  } else {
+    base = BASE_INCOME + CITY_INCOME * citiesOf(g, side).length;
   }
-  return BASE_INCOME + CITY_INCOME * citiesOf(g, side).length;
+  return Math.round(base * (g.settings?.incomeMul ?? 1));
+}
+
+/** 武装の残弾を満タンにした状態を作る */
+export function fullAmmo(g: { defs: UnitDefs }, kind: string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const w of g.defs[kind].weapons) out[w.name] = w.ammo;
+  return out;
+}
+
+/** ユニットの残弾を全回復する(補給ルールOFFなら何もしない) */
+export function refillAmmo(g: Game, u: Unit): void {
+  if (!g.settings?.supply) return;
+  u.ammo = fullAmmo(g, u.kind);
+}
+
+/** 占領済み town 上にいる自軍ユニットは、HPと残弾が全回復する */
+export function resupplyOnOwnedTowns(g: Game, side: Side): void {
+  for (const u of liveUnits(g, side)) {
+    const town = townAt(g, u);
+    if (town && town.owner === side) {
+      u.hp = g.defs[u.kind].hp;
+      refillAmmo(g, u);
+    }
+  }
 }
 
 export const cheapestCost = (g: Game): number =>
@@ -60,9 +89,9 @@ export const cheapestCost = (g: Game): number =>
 
 /** 生産した直後の駒は、そのターンは動けない。各陣営100部隊が上限 */
 export function spawn(g: Game, side: Side, kind: string, at: Cube): boolean {
-  if (liveUnits(g, side).length >= MAX_UNITS_PER_SIDE) return false;
+  if (liveUnits(g, side).length >= (g.settings?.maxUnits ?? MAX_UNITS_PER_SIDE)) return false;
   g.units.push({
-    x: at.x, y: at.y, z: at.z, side, kind, hp: g.defs[kind].hp, moved: true, acted: true, from: null,
+    x: at.x, y: at.y, z: at.z, side, kind, hp: g.defs[kind].hp, ammo: fullAmmo(g, kind), moved: true, acted: true, from: null,
   });
   return true;
 }
@@ -82,8 +111,27 @@ function resolveLines(kind: LineFeature['kind'], lines: LineData[], tilesById: M
 }
 
 /** units.json と map.json / hex.json から、新しいゲームを作る */
-export function createGame(defs: UnitDefs, map: MapData): Game {
+export function createGame(defs: UnitDefs, map: MapData, settings: GameSettings = DEFAULT_SETTINGS): Game {
   if (!Array.isArray(map.hexes) || map.hexes.length === 0) throw new Error('hex.json: hexes が空です');
+  // マップサイズは 128x128 に固定(AI演算の最適化のため)。データが不足する場合はエラーで終了する
+  {
+    let mc = 0;
+    let mr = 0;
+    const seen = new Set<string>();
+    for (const h of map.hexes) {
+      if (Number.isInteger(h.col) && Number.isInteger(h.row)) {
+        mc = Math.max(mc, h.col + 1);
+        mr = Math.max(mr, h.row + 1);
+        seen.add(`${h.col},${h.row}`);
+      }
+    }
+    const need = MAX_MAP_COLS * MAX_MAP_ROWS;
+    if (mc !== MAX_MAP_COLS || mr !== MAX_MAP_ROWS || seen.size !== need) {
+      throw new Error(
+        `hex.json: マップサイズは ${MAX_MAP_COLS}x${MAX_MAP_ROWS} 固定です。データが不足しています(現在の範囲 ${mc}x${mr}、ヘックス ${seen.size}/${need} 件)。128x128 の hex.json を用意してください`,
+      );
+    }
+  }
 
   const tiles = new Map<string, Tile>();
   const tilesById = new Map<number, Tile>();
@@ -178,16 +226,16 @@ export function createGame(defs: UnitDefs, map: MapData): Game {
       throw new Error(`map.json: ${u.side === 'p' ? 'プレイヤー' : '敵'}の部隊数が上限 ${MAX_UNITS_PER_SIDE} を超えています`);
     }
     const t = tileAtOffset(u.col, u.row);
-    return { x: t.x, y: t.y, z: t.z, side: u.side, kind: u.type, hp: def.hp, moved: false, acted: false, from: null };
+    return { x: t.x, y: t.y, z: t.z, side: u.side, kind: u.type, hp: def.hp, ammo: fullAmmo({ defs }, u.type), moved: false, acted: false, from: null };
   });
 
   const game: Game = {
-    defs, width, height, tiles, tilesById,
+    defs, settings, width, height, tiles, tilesById,
     roads: resolveLines('road', map.roads, tilesById),
     rivers: resolveLines('river', map.rivers, tilesById),
     towns,
     units,
-    gold: { p: map.gold.p, e: map.gold.e },
+    gold: { p: settings.gold ?? map.gold.p, e: settings.gold ?? map.gold.e },
     turn: 1,
     over: false,
     busy: false,
@@ -195,6 +243,9 @@ export function createGame(defs: UnitDefs, map: MapData): Game {
     selected: null,
     selectedHex: null,
     reach: null,
+    pendingFx: null,
+    pendingMoveSfx: null,
+    fxSeq: 0,
   };
   return game;
 }
