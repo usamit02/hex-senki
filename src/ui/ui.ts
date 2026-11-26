@@ -1,8 +1,8 @@
-import { canProduce } from './rules';
-import { income, liveUnits, producibleHexKeys } from './state';
-import { key } from './hex';
-import { getTheme } from './themes';
-import { MAX_UNITS_PER_SIDE, type Game, type Unit } from './types';
+import { canProduce } from '../game/rules';
+import { income, liveUnits, producibleHexKeys } from '../game/state';
+import { key } from '../game/hex';
+import { getTheme } from '../game/themes';
+import { MAX_UNITS_PER_SIDE, type Game, type Unit } from '../game/types';
 
 export interface HudHandlers {
   onProduce(kind: string): void;
@@ -15,6 +15,18 @@ export interface HudHandlers {
   onSelectUnit(u: Unit): void;
   /** ミニマップの赤枠ドラッグ: 表示中心を全体に対する割合(0..1)で指定 */
   onMinimapPan(fx: number, fy: number): void;
+  /** 部隊表の ⚑: 師団長の指定/解除(全滅した師団があればその再指定) */
+  onToggleCommander(u: Unit): void;
+  /** 師団の目標変更 */
+  onSetObjective(dIndex: number, objectiveKey: string): void;
+  /** 師団を委任実行 */
+  onRunDelegation(dIndex: number): void;
+  /** 師団を解散 */
+  onReleaseDelegation(dIndex: number): void;
+  /** 全師団を委任実行 */
+  onRunAllDelegations(): void;
+  /** 委任思考の「もう打ってよい」 */
+  onStopThinking(): void;
 }
 
 export interface ContextAction {
@@ -38,6 +50,12 @@ export interface Hud {
   openPane(side: PaneSide): void;
   /** ミニマップ全体図を描き直す(地形・town・ユニット・表示範囲の赤枠) */
   drawMinimap(g: Game, viewport: { x: number; y: number; w: number; h: number } | null, world: { x: number; y: number; w: number; h: number }): void;
+  /** 字幕ログへ1行追加する */
+  appendLog(line: string): void;
+  /** 字幕ログを消す */
+  clearLog(): void;
+  /** 思考中表示(「もう打ってよい」ボタンの出し入れ) */
+  setThinking(on: boolean): void;
 }
 
 const el = <T extends HTMLElement>(id: string): T => {
@@ -130,6 +148,10 @@ export function createHud(handlers: HudHandlers): Hud {
     const idx = g.selected ? ready.indexOf(g.selected) : -1;
     handlers.onSelectUnit(ready[(idx + 1) % ready.length]);
   };
+  const btnStop = el<HTMLButtonElement>('btn-stop-thinking');
+  btnStop.onclick = () => handlers.onStopThinking();
+  el<HTMLButtonElement>('btn-run-all-delegations').onclick = () => handlers.onRunAllDelegations();
+  const aiLog = el('ai-log');
   let minimapDrag = false;
   const minimapPan = (e: PointerEvent): void => {
     const r = minimap.getBoundingClientRect();
@@ -214,6 +236,8 @@ export function createHud(handlers: HudHandlers): Hud {
       for (const u of mine) {
         const def = g.defs[u.kind];
         const tile = [...g.tiles.values()].find((t) => t.x === u.x && t.y === u.y && t.z === u.z);
+        const row = document.createElement('div');
+        row.className = 'unit-row-flex';
         const b = document.createElement('button');
         b.className = 'unit-pick';
         if (g.selected === u) b.classList.add('selected');
@@ -223,8 +247,69 @@ export function createHud(handlers: HudHandlers): Hud {
           .join(' ');
         b.textContent = `${def.name} HP${u.hp}/${def.hp} 燃料${u.fuel}/${def.fuel}${ammoText ? ` ${ammoText}` : ''} @${tile ? `${tile.col},${tile.row}` : '?'} ${u.carriedBy ? '(搭乗中)' : u.acted ? '行動済' : '未行動'}`;
         b.onclick = () => handlers.onSelectUnit(u.carriedBy ?? u);
-        unitTable.append(b);
+        row.append(b);
+        if (!u.carriedBy) {
+          const flag = document.createElement('button');
+          flag.className = 'flag-btn';
+          const isCommander = (g.delegations ?? []).some((d) => g.units[d.unit] === u);
+          if (isCommander) flag.classList.add('active');
+          flag.textContent = '⚑';
+          flag.title = isCommander ? '師団長(クリックで解除)' : '師団長にする';
+          flag.onclick = () => handlers.onToggleCommander(u);
+          row.append(flag);
+        }
+        unitTable.append(row);
       }
+      // 師団パネル(上ペイン): 師団長・目標・委任実行
+      const divisionsBox = el('divisions');
+      divisionsBox.replaceChildren();
+      const delegations = g.delegations ?? [];
+      if (delegations.length === 0) {
+        const p = document.createElement('div');
+        p.className = 'unit-row';
+        p.textContent = '師団は未編成です。部隊表の ⚑ で師団長を指定してください。';
+        divisionsBox.append(p);
+      }
+      delegations.forEach((d, di) => {
+        const row = document.createElement('div');
+        row.className = 'div-row';
+        const cmd = d.unit >= 0 ? g.units[d.unit] : undefined;
+        const head = document.createElement('div');
+        head.textContent = !cmd
+          ? `師団${di + 1}: 師団長が全滅しました。部隊表の ⚑ で別のユニットを指定してください`
+          : `師団${di + 1}: 師団長 ${g.defs[cmd.kind].name}${cmd.acted ? '(行動済み・今ターンは委任不可)' : ''}`;
+        row.append(head);
+        const sel = document.createElement('select');
+        for (const t of g.towns) {
+          const tile = g.tilesById.get(t.hexId);
+          if (!tile) continue;
+          const o = document.createElement('option');
+          o.value = key(tile);
+          o.textContent = `目標: ${t.name}${t.owner === 'p' ? '(自軍)' : t.owner === 'e' ? '(敵)' : ''}`;
+          sel.append(o);
+        }
+        for (const a of g.airports) {
+          const tile = g.tilesById.get(a.hexId);
+          if (!tile) continue;
+          const o = document.createElement('option');
+          o.value = key(tile);
+          o.textContent = `目標: ${a.name}(空港)`;
+          sel.append(o);
+        }
+        sel.value = d.objectiveKey;
+        sel.onchange = () => handlers.onSetObjective(di, sel.value);
+        row.append(sel);
+        const run = document.createElement('button');
+        run.textContent = '委任実行';
+        run.disabled = g.busy || g.over || !cmd || cmd.acted;
+        run.onclick = () => handlers.onRunDelegation(di);
+        row.append(run);
+        const rel = document.createElement('button');
+        rel.textContent = '解散';
+        rel.onclick = () => handlers.onReleaseDelegation(di);
+        row.append(rel);
+        divisionsBox.append(row);
+      });
       // 状況表(上ペイン・部隊表の横): 陣営ごとの占領都市数・人口・ユニット数(種別ごと)
       const situation = el('situation');
       const sideRow = (side: 'p' | 'e', label: string): string => {
@@ -276,6 +361,18 @@ export function createHud(handlers: HudHandlers): Hud {
     },
     showInfo(html) {
       info.innerHTML = html;
+    },
+    appendLog(line) {
+      const div = document.createElement('div');
+      div.textContent = line;
+      aiLog.append(div);
+      aiLog.scrollTop = aiLog.scrollHeight;
+    },
+    clearLog() {
+      aiLog.replaceChildren();
+    },
+    setThinking(on) {
+      btnStop.hidden = !on;
     },
     openPane,
     drawMinimap(g, viewport, world) {

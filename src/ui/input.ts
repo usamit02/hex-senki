@@ -1,9 +1,9 @@
-import { distance, key } from './hex';
-import { attack, boardUnit, canBoard, cargoOf, confirmUnit, disembarkUnit, inRange, moveCostOf, moveUnit, reachable, resupplyFromAdjacentSupply, undoMove } from './rules';
-import { INCOME_POPULATION_UNIT, linesAt, producibleHexKeys, tileAt, townAt, unitAt } from './state';
-import { TERRAINS } from './terrain';
-import { getTheme } from './themes';
-import type { Cube, Game, Tile, Unit } from './types';
+import { distance, key } from '../game/hex';
+import { attack, boardUnit, canBoard, cargoList, cargoOf, confirmUnit, disembarkUnit, inRange, moveCostOf, moveUnit, reachable, resupplyFromAdjacentSupply, undoMove } from '../game/rules';
+import { INCOME_POPULATION_UNIT, linesAt, producibleHexKeys, tileAt, townAt, unitAt } from '../game/state';
+import { TERRAINS } from '../game/terrain';
+import { getTheme } from '../game/themes';
+import type { Cube, Game, Tile, Unit } from '../game/types';
 
 export interface InputDeps {
   getGame(): Game;
@@ -164,11 +164,11 @@ export function describeHex(g: Game, t: Tile): string {
 
 /** ユニット情報(左ペイン表示用)。武装と残弾も出す */
 export function describeUnit(g: Game, u: Unit): string {
-  const cargo = cargoOf(g, u);
+  const cargos = cargoList(g, u);
   const extra: string[] = [];
   if (u.carriedBy) extra.push(`${g.defs[u.carriedBy.kind].name}に搭乗中`);
-  if (cargo) extra.push(`${g.defs[cargo.kind].name}が搭乗中(隣の空きマスをクリックで降車)`);
-  else if (g.defs[u.kind].transport) extra.push('歩兵を搭乗させられる(歩兵がクリック)');
+  if (cargos.length > 0) extra.push(`${cargos.map((c) => g.defs[c.kind].name).join('・')}が搭乗中(隣の空きマスをクリックで降車)`);
+  else if (g.defs[u.kind].transport) extra.push(`歩兵を${g.defs[u.kind].transport}体まで搭乗させられる(歩兵がクリック)`);
   const def = g.defs[u.kind];
   const t = tileAt(g, u);
   const theme = getTheme(g.settings.theme);

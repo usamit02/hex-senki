@@ -75,8 +75,26 @@ export function refillAmmo(g: Game, u: Unit): void {
   u.fuel = g.defs[u.kind].fuel;
 }
 
-/** 占領済み town 上にいる自軍ユニットは、HPと残弾・燃料が全回復する */
+/**
+ * HP回復: 回復率(回復量/最大HP)に応じた生産コスト分の gold を消費する。
+ * 燃料・弾薬の補給は無料。資金が足りなければ、買える分だけ部分回復する
+ */
+function healWithGold(g: Game, u: Unit, capHp: number): void {
+  const def = g.defs[u.kind];
+  const need = Math.min(def.hp, capHp) - u.hp;
+  if (need <= 0) return;
+  const affordable = Math.floor((g.gold[u.side] * def.hp) / def.cost); // 現在の資金で買えるHP量
+  const heal = Math.min(need, Math.max(0, affordable));
+  if (heal <= 0) return;
+  const charge = Math.min(g.gold[u.side], Math.max(1, Math.round((heal * def.cost) / def.hp)));
+  g.gold[u.side] -= charge;
+  u.hp += heal;
+}
+
+/** 占領済み town 上にいる自軍ユニットは、残弾・燃料が全回復し、HPは gold を払って回復する */
 export function resupplyOnOwnedTowns(g: Game, side: Side): void {
+  // 補給可否と段階(tier)をユニットごとに判定する
+  const plan = new Map<Unit, number>();
   for (const u of liveUnits(g, side)) {
     const def = g.defs[u.kind];
     const town = townAt(g, u);
@@ -89,9 +107,40 @@ export function resupplyOnOwnedTowns(g: Game, side: Side): void {
       ? onOwnedAirport
       : def.domain === 'air' ? (onOwnedTown || onOwnedAirport) : onOwnedTown;
     if (!canRefill) continue;
-    u.hp = def.hp;
-    refillAmmo(g, u);
+    // 補給の段階制(最難関ルール): village は燃料のみ、town は+弾薬、city と空港は+HP回復まで。
+    // 段階制でない場合は従来どおり全て補充する
+    let tier = 3;
+    if (g.settings.supplyTiered && onOwnedTown && town) {
+      tier = town.population >= 100000 ? 3 : town.population >= 10000 ? 2 : 1;
+    }
+    plan.set(u, tier);
   }
+  // 燃料・弾薬は無料なので順不同で補充する
+  for (const [u, tier] of plan) {
+    const def = g.defs[u.kind];
+    if (tier >= 1 && g.settings.supply) u.fuel = def.fuel;
+    if (tier >= 2) refillAmmo(g, u); // refillAmmo は弾薬+燃料を満たす(補給OFF時は無効)
+  }
+  // HP回復は有料。資金不足で全回復できない場合は、搭載歩兵の回復を輸送側より優先する
+  // (ただし歩兵のHPは輸送側の現在HPを越えられない)
+  const healed = new Set<Unit>();
+  const healCargoOf = (carrier: Unit): void => {
+    for (const c of g.units) {
+      if (c.carriedBy === carrier && c.hp > 0 && plan.get(c) === 3) healWithGold(g, c, carrier.hp);
+    }
+  };
+  const healOne = (u: Unit): void => {
+    if (healed.has(u) || plan.get(u) !== 3) return;
+    healed.add(u);
+    if (u.carriedBy) {
+      healWithGold(g, u, u.carriedBy.hp);
+    } else {
+      healCargoOf(u); // 歩兵を先に回復する
+      healWithGold(g, u, g.defs[u.kind].hp);
+      healCargoOf(u); // 輸送側が回復して上限が上がったら、歩兵を追加で回復する
+    }
+  };
+  for (const u of plan.keys()) healOne(u);
 }
 
 export const cheapestCost = (g: Game): number =>
@@ -260,7 +309,7 @@ export function createGame(defs: UnitDefs, map: MapData, settings: GameSettings 
   for (const l of map.rivers) for (const id of l.path) { const t = tilesById.get(id); if (t) t.hasRiver = true; }
 
   const game: Game = {
-    defs, settings, width, height, tiles, tilesById, airports,
+    defs, settings, delegations: [], width, height, tiles, tilesById, airports,
     roads: resolveLines('road', map.roads, tilesById),
     rivers: resolveLines('river', map.rivers, tilesById),
     towns,

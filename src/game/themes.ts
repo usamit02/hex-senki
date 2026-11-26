@@ -67,7 +67,7 @@ const MODERN: Theme = {
       ],
     },
     air_heli: {
-      name: 'ヘリコプター', short: 'ヘ', hp: 16, move: 6, defense: 2, cost: 30, fuel: 12, domain: 'air', category: 'heli', model: 'heli', canCapture: false, transport: true, moveSfx: 'rotor',
+      name: 'ヘリコプター', short: 'ヘ', hp: 16, move: 6, defense: 2, cost: 30, fuel: 12, domain: 'air', category: 'heli', model: 'heli', canCapture: false, transport: 1, moveSfx: 'rotor',
       weapons: [
         { name: '対戦車ミサイル', power: 7, minRange: 1, range: 1, ammo: 4, sfx: 'missile', vs: { tank: 1.3, infantry: 1.5, sam: 1, heli: 0.8, jet: 0.5, supply: 1.2 } },
         { name: 'ロケット弾', power: 5, minRange: 1, range: 1, ammo: 8, sfx: 'rocket', vs: { infantry: 1.3, tank: 0.9, sam: 0.9, supply: 1 } },
@@ -87,7 +87,7 @@ const MODERN: Theme = {
       ],
     },
     ground_truck: {
-      name: 'トラック', short: 'ト', hp: 12, move: 6, defense: 0, cost: 15, fuel: 18, domain: 'ground', category: 'truck', model: 'truck', canCapture: false, transport: true, moveSfx: 'engine',
+      name: 'トラック', short: 'ト', hp: 12, move: 6, defense: 0, cost: 15, fuel: 18, domain: 'ground', category: 'truck', model: 'truck', canCapture: false, transport: 1, moveSfx: 'engine',
       weapons: [],
     },
     ground_supply: {
@@ -150,7 +150,7 @@ const FANTASY: Theme = {
       ],
     },
     fantasy_cart: {
-      name: '荷馬車', short: '馬', hp: 12, move: 5, defense: 0, cost: 12, fuel: 15, domain: 'ground', category: 'cart', model: '', canCapture: false, transport: true, moveSfx: 'hoof',
+      name: '荷馬車', short: '馬', hp: 12, move: 5, defense: 0, cost: 12, fuel: 15, domain: 'ground', category: 'cart', model: '', canCapture: false, transport: 1, moveSfx: 'hoof',
       weapons: [],
     },
     fantasy_dragon: {
@@ -210,7 +210,7 @@ const SENGOKU: Theme = {
       ],
     },
     sengoku_cart: {
-      name: '荷車', short: '車', hp: 12, move: 5, defense: 0, cost: 12, fuel: 15, domain: 'ground', category: 'cart', model: '', canCapture: false, transport: true, moveSfx: 'wheel',
+      name: '荷車', short: '車', hp: 12, move: 5, defense: 0, cost: 12, fuel: 15, domain: 'ground', category: 'cart', model: '', canCapture: false, transport: 1, moveSfx: 'wheel',
       weapons: [],
     },
     sengoku_cannon: {
@@ -273,7 +273,7 @@ const ROBOT: Theme = {
       ],
     },
     robot_transport: {
-      name: '輸送車両', short: '輸', hp: 14, move: 6, defense: 1, cost: 16, fuel: 18, domain: 'ground', category: 'transport', model: '', canCapture: false, transport: true, moveSfx: 'engine',
+      name: '輸送車両', short: '輸', hp: 14, move: 6, defense: 1, cost: 16, fuel: 18, domain: 'ground', category: 'transport', model: '', canCapture: false, transport: 1, moveSfx: 'engine',
       weapons: [],
     },
     robot_sniper: {

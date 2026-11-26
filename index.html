@@ -62,6 +62,15 @@
         <h2>状況表</h2>
         <div id="situation"></div>
       </div>
+      <div class="top-col">
+        <h2>師団(委任)</h2>
+        <div class="top-tools">
+          <button id="btn-run-all-delegations" type="button">全師団を委任実行</button>
+          <button id="btn-stop-thinking" type="button" hidden>もう打ってよい</button>
+        </div>
+        <div id="divisions"></div>
+        <p class="note">部隊表の ⚑ で師団長を指定すると、師団長と周囲8ヘックス以内の未行動ユニットが、目標へ集団行動します。委任するかどうかはターンごとに実行ボタンで決めます。生産は委任できません。</p>
+      </div>
     </div>
   </aside>
 
@@ -85,6 +94,7 @@
       <button id="bsv">セーブ</button>
       <button id="bld">ロード</button>
     </div>
+    <div id="ai-log" aria-label="作戦ログ"></div>
     <details>
       <summary>遊び方</summary>
       <p>青があなたの軍です。自分の駒をクリックして選び、光ったマスへ移動、赤い枠の敵をクリックして攻撃します。ホイールで拡大/縮小、ドラッグでスクロール、矢印キー/WASDでも移動できます。生産は生産可能ヘックスの右クリックメニューから行います。</p><p>ユニットには複数の武装と残弾があり、戦闘ごとに残弾が減ります(補給OFF時は無制限)。占領済み town 上でターン開始を迎えるとHPと残弾が全回復し、補給ユニットの隣接でも残弾が回復します。占領は歩兵系ユニットのみで、town 上で行動を終えた時点で確定します。</p>
@@ -137,9 +147,36 @@
       <fieldset>
         <legend>ルール</legend>
         <label><input id="set-zoc" type="checkbox"> ZOC(敵に隣接したヘックスに入ると移動終了)</label>
-        <label><input id="set-supply" type="checkbox" checked> 補給(残弾の消費と回復)</label>
+        <label>補給ルール <select id="set-supply">
+          <option value="off">なし(残弾・燃料は無制限)</option>
+          <option value="on">あり(全ての town で燃料・弾薬・HP を補充)</option>
+          <option value="tiered">段階制・最難関(village は燃料のみ／town は+弾薬／city は+HP回復)</option>
+        </select></label>
         <label><input id="set-production" type="checkbox" checked> 生産できる</label>
         <label><input id="set-counter" type="checkbox" checked> 反撃する</label>
+      </fieldset>
+      <fieldset>
+        <legend>AI・音声(ゲーム開始時にのみ設定)</legend>
+        <label>CPU最大思考時間
+          <select id="set-aithink">
+            <option value="60000">1分</option>
+            <option value="180000">3分</option>
+            <option value="300000">5分</option>
+            <option value="600000">10分</option>
+          </select>
+        </label>
+        <label>敵司令官の性格
+          <select id="set-aipersonality">
+            <option value="balanced">バランス型</option>
+            <option value="aggressive">好戦的</option>
+            <option value="supply">補給重視</option>
+            <option value="defensive">守り重視</option>
+            <option value="tricky">奇策好き</option>
+            <option value="careless">そそっかしい</option>
+          </select>
+        </label>
+        <label><input id="set-voice" type="checkbox"> VOICEVOXで敵司令官が喋る</label>
+        <label><input id="set-subtitles" type="checkbox" checked> 字幕ログを表示する</label>
       </fieldset>
       <button id="set-start" class="go big">ゲーム開始</button>
     </div>

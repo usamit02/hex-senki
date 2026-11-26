@@ -1,5 +1,5 @@
-import type { SaveEntry } from './save';
-import { getTheme } from './themes';
+import type { SaveEntry } from '../game/save';
+import { getTheme } from '../game/themes';
 
 /** セーブ選択画面(起動時・ロード時)。一覧から選んで読み込む */
 

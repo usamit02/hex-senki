@@ -61,14 +61,34 @@ export function canAttackTarget(g: Game, a: Unit, d: Unit): boolean {
   return pickWeapon(g, a, d) !== null;
 }
 
+/** HPが機数・人数を表すテーマか(現代戦・戦国)。この2テーマでは攻撃力がHPに比例して低下し、搭載可否もHPで判定する */
+export function isHpCountTheme(g: Game): boolean {
+  return g.settings.theme === 'modern' || g.settings.theme === 'sengoku';
+}
+
 /** ダメージ計算: 武装の攻撃力×相性 - 実効防御、最低1。反撃は追加で-2。乱数は使わない(結果は固定) */
-export function calcDamage(g: Game, defender: Unit, weapon: WeaponDef, counter = false): number {
+export function calcDamage(g: Game, attacker: Unit, defender: Unit, weapon: WeaponDef, counter = false): number {
   const defTile = tileAt(g, defender);
   const effDef = defTile ? effectiveDefense(g, defender, defTile) : g.defs[defender.kind].defense;
-  const base = weapon.power * weaponVs(weapon, g.defs[defender.kind].category);
+  let base = weapon.power * weaponVs(weapon, g.defs[defender.kind].category);
+  // 現代戦・戦国では、攻撃力は攻撃側の現在HP(機数・人数)に比例して低下する
+  if (isHpCountTheme(g)) base *= attacker.hp / g.defs[attacker.kind].hp;
   // 戦闘結果は乱数なしで固定する(パラメータと地形だけで決まる。CPU AI の高速化のため)
   const raw = Math.round(base) - effDef - (counter ? 2 : 0);
   return Math.max(1, raw);
+}
+
+/**
+ * 輸送ユニットが受けたダメージと同率で、搭載中ユニットのHPも減る(全テーマ共通)。
+ * 輸送側が全滅した場合は呼び出し側で道連れ処理をするので、ここでは生存時のみ扱う
+ */
+export function damageCargoProportional(g: Game, carrier: Unit, dmg: number): void {
+  if (dmg <= 0 || carrier.hp <= 0) return;
+  const rate = dmg / g.defs[carrier.kind].hp;
+  for (const c of cargoList(g, carrier)) {
+    const loss = Math.round(rate * g.defs[c.kind].hp);
+    if (loss > 0) c.hp = Math.max(0, c.hp - loss);
+  }
 }
 
 /** ZOC: そのヘックスが敵ユニットに隣接しているか(航空ユニットは地上のZOCを無視する扱い) */
@@ -141,9 +161,14 @@ export function inRange(g: Game, a: Unit, d: Unit): boolean {
   return canAttackTarget(g, a, d);
 }
 
+/** 輸送ユニットに搭乗中のユニット一覧 */
+export function cargoList(g: Game, carrier: Unit): Unit[] {
+  return g.units.filter((u) => u.carriedBy === carrier && u.hp > 0);
+}
+
 /** 輸送ユニットに搭乗中の歩兵(いなければ null) */
 export function cargoOf(g: Game, carrier: Unit): Unit | null {
-  return g.units.find((u) => u.carriedBy === carrier && u.hp > 0) ?? null;
+  return cargoList(g, carrier)[0] ?? null;
 }
 
 /** 歩兵が輸送ユニットに搭乗できるか(輸送側の行動前後は問わない) */
@@ -151,8 +176,11 @@ export function canBoard(g: Game, inf: Unit, carrier: Unit): boolean {
   if (inf.hp <= 0 || inf.carriedBy || inf.acted) return false;
   if (!g.defs[inf.kind].canCapture) return false; // 搭乗できるのは歩兵のみ
   if (carrier.hp <= 0 || carrier.side !== inf.side) return false;
-  if (!g.defs[carrier.kind].transport) return false;
-  if (cargoOf(g, carrier)) return false; // 定員1
+  const capacity = g.defs[carrier.kind].transport ?? 0;
+  if (capacity <= 0) return false;
+  if (cargoList(g, carrier).length >= capacity) return false; // 定員(transport の数)まで
+  // 現代戦・戦国では HP は機数・人数を表すため、歩兵より HP の低い輸送ユニットには搭載できない(搭乗時のみ判定)
+  if (isHpCountTheme(g) && carrier.hp < inf.hp) return false;
   return true;
 }
 
@@ -193,9 +221,8 @@ export function moveUnit(g: Game, u: Unit, t: Tile, cost = 0): void {
   };
   setPos(u, t);
   u.moved = true;
-  // 搭乗中の歩兵も一緒に移動する
-  const cargo = cargoOf(g, u);
-  if (cargo) setPos(cargo, t);
+  // 搭乗中のユニットも一緒に移動する
+  for (const c of cargoList(g, u)) setPos(c, t);
   if (g.settings.supply) {
     u.fuel = Math.max(0, u.fuel - cost);
     // 航空ユニットは燃料が尽きたら墜落する
@@ -204,8 +231,8 @@ export function moveUnit(g: Game, u: Unit, t: Tile, cost = 0): void {
       g.message = `${sideName(u.side)}の${g.defs[u.kind].name}は燃料切れで墜落した。`;
     }
   }
-  // 輸送ユニットが全滅したら搭乗中の歩兵も全滅する
-  if (u.hp <= 0 && cargo) cargo.hp = 0;
+  // 輸送ユニットが全滅したら搭乗中のユニットも全滅する
+  if (u.hp <= 0) for (const c of cargoList(g, u)) c.hp = 0;
   g.pendingMoveSfx = g.defs[u.kind].moveSfx;
   // 移動後: 補給ユニットに隣接していれば残弾回復
   resupplyFromAdjacentSupply(g, u);
@@ -282,26 +309,29 @@ export function attack(g: Game, a: Unit, d: Unit): void {
   const w = pickWeapon(g, a, d);
   if (!w) return;
   if (g.settings.supply && w.ammo >= 0) a.ammo[w.name] = (a.ammo[w.name] ?? w.ammo) - 1;
-  const dmg = calcDamage(g, d, w);
+  const dmg = calcDamage(g, a, d, w);
   d.hp -= dmg;
   let counterDmg = 0;
   let m = `${a.side === 'p' ? 'あなたの' : '敵の'}${A.name}が${w.name}で${dmg}ダメージを与えた。`;
   if (d.hp <= 0) {
-    const dCargo = cargoOf(g, d);
-    if (dCargo) dCargo.hp = 0;
+    for (const c of cargoList(g, d)) c.hp = 0;
     m += `${D.name}を倒した!`;
-  } else if (g.settings.counter) {
-    const cw = pickWeapon(g, d, a);
-    if (cw) {
-      if (g.settings.supply && cw.ammo >= 0) d.ammo[cw.name] = (d.ammo[cw.name] ?? cw.ammo) - 1;
-      const counter = calcDamage(g, a, cw, true);
-      counterDmg = counter;
-      a.hp -= counter;
-      m += ` 反撃(${cw.name})で${counter}ダメージ。`;
-      if (a.hp <= 0) {
-        const aCargo = cargoOf(g, a);
-        if (aCargo) aCargo.hp = 0;
-        m += `${A.name}が倒れた。`;
+  } else {
+    damageCargoProportional(g, d, dmg); // 搭載中ユニットも同率でHPが減る
+    if (g.settings.counter) {
+      const cw = pickWeapon(g, d, a);
+      if (cw) {
+        if (g.settings.supply && cw.ammo >= 0) d.ammo[cw.name] = (d.ammo[cw.name] ?? cw.ammo) - 1;
+        const counter = calcDamage(g, d, a, cw, true);
+        counterDmg = counter;
+        a.hp -= counter;
+        m += ` 反撃(${cw.name})で${counter}ダメージ。`;
+        if (a.hp <= 0) {
+          for (const c of cargoList(g, a)) c.hp = 0;
+          m += `${A.name}が倒れた。`;
+        } else {
+          damageCargoProportional(g, a, counter);
+        }
       }
     }
   }

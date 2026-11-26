@@ -100,3 +100,11 @@ button.big{width:100%;padding:10px;font-size:1.05rem}
 .top-tools{display:flex;gap:6px;margin:0 0 6px}
 .top-tools button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:.85rem}
 .top-tools button.active{background:rgba(70,130,200,.4);border-color:rgba(140,190,255,.8)}
+.unit-row-flex{display:flex;gap:4px;align-items:stretch;margin:2px 0}
+.unit-row-flex .unit-pick{flex:1;text-align:left}
+.flag-btn{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:2px 8px;cursor:pointer;font-size:.95rem;opacity:.55}
+.flag-btn.active{opacity:1;background:rgba(70,130,200,.4);border-color:rgba(140,190,255,.8)}
+.div-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);font-size:13px}
+.div-row select{max-width:220px}
+#ai-log{max-height:130px;overflow-y:auto;font-size:12.5px;line-height:1.6;padding:4px 2px;color:var(--fg)}
+#ai-log:empty{display:none}

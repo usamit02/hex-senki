@@ -1,9 +1,9 @@
 import Phaser from 'phaser';
-import { fromPixel, key, toPixel } from './hex';
-import { inRange } from './rules';
-import { townAt, unitAt } from './state';
-import { getTheme } from './themes';
-import type { Cube, Game, Tile, Unit } from './types';
+import { fromPixel, key, toPixel } from '../game/hex';
+import { inRange } from '../game/rules';
+import { townAt, unitAt } from '../game/state';
+import { getTheme } from '../game/themes';
+import type { Cube, Game, Tile, Unit } from '../game/types';
 
 /**
  * 要件2: 描画は Phaser(メインスレッド)にアップグレード。
@@ -21,7 +21,7 @@ export interface BoardCallbacks {
 
 /** 3Dモデル表示用: ユニットの画面(CSSピクセル)位置と大きさ */
 export interface UnitView {
-  unit: import('./types').Unit;
+  unit: import('../game/types').Unit;
   x: number;
   y: number;
   /** ヘックス半径の画面ピクセル */
@@ -602,6 +602,7 @@ class BoardScene extends Phaser.Scene {
   /** 都市アイコン+所有リング(占領状態で変わるため refresh のたびに描き直す) */
   private drawTowns(g: Game): void {
     const size = HEX_SIZE;
+    const S = size * 1.3; // アイコンを大きめに描く(ヘックスからはみ出さない範囲)
     const gtw = this.gTowns;
     gtw.clear();
     const cs = getComputedStyle(document.documentElement);
@@ -611,37 +612,37 @@ class BoardScene extends Phaser.Scene {
       const { x, y } = toPixel(town.at, size);
       const ring = town.owner === 'p' ? player : town.owner === 'e' ? enemy : NEUTRAL;
       gtw.lineStyle(town.capital ? 4 : 2, ring, 1);
-      gtw.strokeCircle(x, y, size * 0.44);
+      gtw.strokeCircle(x, y, S * 0.5);
       // 人口でアイコンを描き分ける: 10万人以上=city(高層ビル群)、1万人以上=town(中層ビル)、それ以下=village(家)
       if (town.population >= 100000) {
         gtw.fillStyle(0x2f3b4c, 1);
-        gtw.fillRect(x - size * 0.36, y - size * 0.02, size * 0.2, size * 0.32);
-        gtw.fillRect(x - size * 0.11, y - size * 0.34, size * 0.26, size * 0.64);
-        gtw.fillRect(x + size * 0.2, y - size * 0.14, size * 0.18, size * 0.44);
-        gtw.fillRect(x - size * 0.02, y - size * 0.44, size * 0.08, size * 0.12);
+        gtw.fillRect(x - S * 0.36, y - S * 0.02, S * 0.2, S * 0.32);
+        gtw.fillRect(x - S * 0.11, y - S * 0.34, S * 0.26, S * 0.64);
+        gtw.fillRect(x + S * 0.2, y - S * 0.14, S * 0.18, S * 0.5);
+        gtw.fillRect(x - S * 0.02, y - S * 0.5, S * 0.08, S * 0.12);
         gtw.fillStyle(0xf5d76e, 1);
-        gtw.fillRect(x - size * 0.04, y - size * 0.22, size * 0.05, size * 0.07);
-        gtw.fillRect(x + size * 0.05, y - size * 0.1, size * 0.05, size * 0.07);
-        gtw.fillRect(x - size * 0.29, y + size * 0.06, size * 0.05, size * 0.07);
-        gtw.fillRect(x + size * 0.25, y - size * 0.04, size * 0.05, size * 0.07);
+        gtw.fillRect(x - S * 0.04, y - S * 0.22, S * 0.05, S * 0.07);
+        gtw.fillRect(x + S * 0.05, y - S * 0.1, S * 0.05, S * 0.07);
+        gtw.fillRect(x - S * 0.29, y + S * 0.06, S * 0.05, S * 0.07);
+        gtw.fillRect(x + S * 0.25, y - S * 0.04, S * 0.05, S * 0.07);
       } else if (town.population >= 10000) {
         gtw.fillStyle(0x3a4a5c, 1);
-        gtw.fillRect(x - size * 0.3, y - size * 0.1, size * 0.26, size * 0.4);
-        gtw.fillRect(x + size * 0.02, y + size * 0.0, size * 0.24, size * 0.3);
-        gtw.fillRect(x - size * 0.32, y - size * 0.16, size * 0.62, size * 0.07);
+        gtw.fillRect(x - S * 0.3, y - S * 0.1, S * 0.26, S * 0.4);
+        gtw.fillRect(x + S * 0.02, y + S * 0.0, S * 0.24, S * 0.3);
+        gtw.fillRect(x - S * 0.32, y - S * 0.16, S * 0.62, S * 0.07);
         gtw.fillStyle(0xf5d76e, 1);
-        gtw.fillRect(x - size * 0.2, y - size * 0.02, size * 0.05, size * 0.07);
-        gtw.fillRect(x + size * 0.1, y + size * 0.08, size * 0.05, size * 0.07);
+        gtw.fillRect(x - S * 0.2, y - S * 0.02, S * 0.05, S * 0.07);
+        gtw.fillRect(x + S * 0.1, y + S * 0.08, S * 0.05, S * 0.07);
       } else {
         // village: 屋根のある小さな家を2軒
         gtw.fillStyle(0x6b4a2f, 1);
-        gtw.fillTriangle(x - size * 0.3, y + size * 0.02, x - size * 0.05, y + size * 0.02, x - size * 0.175, y - size * 0.14);
-        gtw.fillTriangle(x + size * 0.04, y + size * 0.1, x + size * 0.27, y + size * 0.1, x + size * 0.155, y - size * 0.03);
+        gtw.fillTriangle(x - S * 0.3, y + S * 0.02, x - S * 0.05, y + S * 0.02, x - S * 0.175, y - S * 0.14);
+        gtw.fillTriangle(x + S * 0.04, y + S * 0.1, x + S * 0.27, y + S * 0.1, x + S * 0.155, y - S * 0.03);
         gtw.fillStyle(0xd8cfc0, 1);
-        gtw.fillRect(x - size * 0.26, y + size * 0.02, size * 0.17, size * 0.2);
-        gtw.fillRect(x + size * 0.07, y + size * 0.1, size * 0.17, size * 0.18);
+        gtw.fillRect(x - S * 0.26, y + S * 0.02, S * 0.17, S * 0.2);
+        gtw.fillRect(x + S * 0.07, y + S * 0.1, S * 0.17, S * 0.18);
         gtw.fillStyle(0x6b4a2f, 1);
-        gtw.fillRect(x - size * 0.2, y + size * 0.1, size * 0.06, size * 0.12);
+        gtw.fillRect(x - S * 0.2, y + S * 0.1, S * 0.06, S * 0.12);
       }
     }
     // 空港: 滑走路+管制塔のアイコンと所有リング(towns と同じ流儀)
@@ -649,19 +650,19 @@ class BoardScene extends Phaser.Scene {
       const { x, y } = toPixel(airport.at, size);
       const ring = airport.owner === 'p' ? player : airport.owner === 'e' ? enemy : NEUTRAL;
       gtw.lineStyle(2, ring, 1);
-      gtw.strokeCircle(x, y, size * 0.44);
+      gtw.strokeCircle(x, y, S * 0.5);
       // 滑走路
       gtw.fillStyle(0x3c4652, 1);
-      gtw.fillRect(x - size * 0.46, y + size * 0.1, size * 0.92, size * 0.2);
+      gtw.fillRect(x - S * 0.46, y + S * 0.1, S * 0.92, S * 0.2);
       gtw.lineStyle(2, 0xffffff, 0.9);
       for (let d = -0.3; d <= 0.3; d += 0.15) {
-        gtw.lineBetween(x + size * d - size * 0.04, y + size * 0.2, x + size * d + size * 0.04, y + size * 0.2);
+        gtw.lineBetween(x + S * d - S * 0.04, y + S * 0.2, x + S * d + S * 0.04, y + S * 0.2);
       }
       // 管制塔
       gtw.fillStyle(0x2f3b4c, 1);
-      gtw.fillRect(x - size * 0.05, y - size * 0.34, size * 0.1, size * 0.42);
+      gtw.fillRect(x - S * 0.05, y - S * 0.34, S * 0.1, S * 0.42);
       gtw.fillStyle(0x7fc8e8, 1);
-      gtw.fillRect(x - size * 0.13, y - size * 0.44, size * 0.26, size * 0.12);
+      gtw.fillRect(x - S * 0.13, y - S * 0.5, S * 0.26, S * 0.12);
     }
   }
 
@@ -737,6 +738,18 @@ class BoardScene extends Phaser.Scene {
         c.add([circle]);
       }
       if (u.side === 'p' && u.moved && u.acted) c.setAlpha(0.45);
+      // 師団長ユニットには陣営の旗を立てる
+      if ((g.delegations ?? []).some((d) => g.units[d.unit] === u)) {
+        const flag = this.add.graphics();
+        const px = size * 0.3;
+        flag.lineStyle(2, 0xffffff, 1);
+        flag.lineBetween(px, -size * 0.42, px, -size * 0.92);
+        flag.fillStyle(u.side === 'p' ? player : enemy, 1);
+        flag.fillTriangle(px, -size * 0.92, px, -size * 0.68, px + size * 0.34, -size * 0.8);
+        flag.lineStyle(1, 0xffffff, 0.9);
+        flag.strokeTriangle(px, -size * 0.92, px, -size * 0.68, px + size * 0.34, -size * 0.8);
+        c.add(flag);
+      }
       this.unitLayer.add(c);
     }
   }

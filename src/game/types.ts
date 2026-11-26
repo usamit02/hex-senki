@@ -58,8 +58,8 @@ export interface UnitDef {
   fuel: number;
   /** 戦闘機タイプ: 生産・補充・補給は空港でのみ可能(航空ユニット用) */
   fighter?: boolean;
-  /** 輸送ユニット: 歩兵を1体搭乗させられる(トラック・ヘリなど) */
-  transport?: boolean;
+  /** 輸送ユニット: 搭載できるユニット数(トラック・ヘリは1。将来の輸送船などは2〜10)。0または未指定なら輸送不可 */
+  transport?: number;
   /** 武装(複数可)。空なら攻撃できない */
   weapons: WeaponDef[];
   /** 移動効果音の種類(sfx.ts のキー) */
@@ -85,10 +85,20 @@ export interface GameSettings {
   zoc: boolean;
   /** 補給(残弾の消費と回復)を使う。false なら残弾無制限 */
   supply: boolean;
+  /** 補給の段階制(最難関ルール): village(人口1万人未満)は燃料のみ、town(1万人以上)は+弾薬、city(10万人以上)は+HP回復 */
+  supplyTiered: boolean;
   /** 生産できる */
   production: boolean;
   /** 反撃する */
   counter: boolean;
+  /** CPU の最大思考時間(ms)。ゲーム開始時にのみ設定できる */
+  aiThinkMs: number;
+  /** 敵司令官の性格(PERSONALITIES のキー) */
+  aiPersonality: string;
+  /** VOICEVOX の音声を使うか(ゲーム開始時に選択) */
+  voice: boolean;
+  /** 字幕ログを表示するか(ゲーム開始時に選択) */
+  subtitles: boolean;
 }
 
 export const DEFAULT_SETTINGS: GameSettings = {
@@ -98,8 +108,13 @@ export const DEFAULT_SETTINGS: GameSettings = {
   maxUnits: MAX_UNITS_PER_SIDE,
   zoc: false,
   supply: true,
+  supplyTiered: false,
   production: true,
   counter: true,
+  aiThinkMs: 600_000,
+  aiPersonality: 'balanced',
+  voice: false,
+  subtitles: true,
 };
 
 /** 交戦アニメーション・効果音用に rules が積むイベント */
@@ -259,9 +274,18 @@ export interface Unit extends Cube {
   from: { pos: Cube; cityOwner: Side | null; townHexId: number | null; townOwner: Side | null } | null;
 }
 
+/** プレイヤー側の師団(委任)指定。unit は g.units のインデックス(-1 は師団長が全滅して未指定) */
+export interface Delegation {
+  unit: number;
+  /** 目標ヘックスのキー(key(tile)) */
+  objectiveKey: string;
+}
+
 export interface Game {
   defs: UnitDefs;
   settings: GameSettings;
+  /** プレイヤー側の師団編成(師団長ユニットと目標) */
+  delegations: Delegation[];
   width: number;
   height: number;
   tiles: Map<string, Tile>;

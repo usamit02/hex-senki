@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { getUnitViews, loadedModelKeys, setModelsActive, type UnitView } from './render';
-import type { Game, Side, Unit, UnitDefs } from './types';
+import type { Game, Side, Unit, UnitDefs } from '../game/types';
 
 /**
  * ユニットの3Dモデル表示層。
@@ -114,23 +114,27 @@ export class UnitModelLayer {
       seen.add(v.unit);
       const inst = this.instanceFor(g, v);
       if (!inst) continue;
-      // 未行動はゆっくり回転、行動済みは右斜め前を向いて静止する
+      // 未行動はゆっくり回転、行動済みは斜め前を向いて静止する。
+      // 首都が左側にある陣営は右斜め前、右側にある陣営は左斜め前を向く
       if (v.unit.acted) {
-        inst.model.rotation.y = ACTED_YAW;
+        const capP = g.towns.find((t) => t.capital === 'p');
+        const capE = g.towns.find((t) => t.capital === 'e');
+        const leftSide = capP && capE ? (capP.col <= capE.col ? 'p' : 'e') : 'p';
+        inst.model.rotation.y = v.unit.side === leftSide ? ACTED_YAW : -ACTED_YAW;
       } else {
         inst.model.rotation.y += ROTATE_SPEED * dt;
       }
       this.drawOne(r, v, inst);
-      // 搭乗中の歩兵は 1/4 サイズで左上に重ねて表示する
-      const cargo = g.units.find((u) => u.carriedBy === v.unit && u.hp > 0);
-      if (cargo) {
+      // 搭乗中のユニットは小さく左上に重ねて表示する(複数の場合は横に並べる)
+      const cargos = g.units.filter((u) => u.carriedBy === v.unit && u.hp > 0);
+      cargos.forEach((cargo, i) => {
         seen.add(cargo);
         const cinst = this.instanceFor(g, { unit: cargo, x: v.x, y: v.y, size: v.size });
         if (cinst) {
           cinst.model.rotation.y = inst.model.rotation.y;
-          this.drawCargo(r, v, cinst);
+          this.drawCargo(r, v, cinst, i);
         }
-      }
+      });
     }
     r.setScissorTest(false);
     // 消えたユニットの後片付け
@@ -162,11 +166,11 @@ export class UnitModelLayer {
   }
 
   /** 搭乗中の歩兵を輸送ユニットの表示枠の左上に 1/4 サイズで描く */
-  private drawCargo(r: THREE.WebGLRenderer, v: UnitView, inst: Instance): void {
+  private drawCargo(r: THREE.WebGLRenderer, v: UnitView, inst: Instance, index = 0): void {
     const box = Math.max(8, v.size * VIEWPORT_FACTOR);
     const mini = box * 0.42;
     // 左上に寄せつつ、隣のヘックスへはみ出さないよう少し中央寄りに置く
-    const x = v.x - box / 2 + box * 0.08;
+    const x = v.x - box / 2 + box * 0.08 + index * mini * 0.92;
     const yTop = v.y - box / 2 + box * 0.08;
     const height = window.innerHeight;
     const y = height - (yTop + mini);

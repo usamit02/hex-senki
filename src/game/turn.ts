@@ -1,7 +1,14 @@
-import { enemyProduce } from './ai';
+import { enemyProduce } from './ai/ai';
 import { settleCaptures } from './rules';
 import { income, liveUnits, resupplyOnOwnedTowns } from './state';
 import type { Game, Unit } from './types';
+
+/** CPUのターンを始める(新AI用)。収入・行動リセット・補給までで、生産と行動は planner が行う */
+export function beginCpuTurn(g: Game): void {
+  if (g.turn > 1) g.gold.e += income(g, 'e');
+  for (const u of g.units) if (u.side === 'e') u.moved = u.acted = false;
+  resupplyOnOwnedTowns(g, 'e');
+}
 
 /** 敵のターンを始める。収入を得て、生産し、このターンに動く駒の一覧を返す(2ターン目から収入あり) */
 export function beginEnemyTurn(g: Game): Unit[] {

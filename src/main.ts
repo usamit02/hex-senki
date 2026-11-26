@@ -1,30 +1,35 @@
 import './style.css';
-import { enemyAct } from './ai';
-import { AiWorkerPool } from './ai/pool';
-import { loadMap, loadThemeUnitDefs } from './data';
-import { addSave, applySave, deleteSave, listSaves, type SaveData } from './save';
-import { showSaveScreen } from './savescreen';
-import { confirmSelected, describeHex, describeUnit, handleHexClick, undoSelectedMove, type InputDeps } from './input';
-import { createRenderer, type BoardCallbacks } from './render';
-import { UnitModelLayer } from './render3d';
-import { canProduce, produce, settleCaptures } from './rules';
-import { createGame, tileAt, unitAt } from './state';
-import { showSettingsScreen } from './settings';
-import { playAttackSfx, playCaptureSfx, playExplosionSfx, playMoveSfx } from './sfx';
-import { getTheme } from './themes';
-import { validateUnitDefs } from './validate';
-import { DEFAULT_SETTINGS, type GameSettings } from './types';
-import { beginEnemyTurn, finishEnemyTurn } from './turn';
-import {} from './hex';
-import type { Game, MapData, ThemeId, UnitDefs } from './types';
-import { createHud, type ContextAction } from './ui';
+import { enemyAct, enemyProduce } from './game/ai/ai';
+import { executePlan, type AiAction } from './game/ai/planner';
+import { AiWorkerPool } from './game/ai/pool';
+import type { AiThinkRequest } from './game/ai/protocol';
+import { loadMap, loadThemeUnitDefs } from './game/data';
+import { addSave, applySave, deleteSave, listSaves, makeSaveData, type SaveData } from './game/save';
+import { showSaveScreen } from './ui/savescreen';
+import { confirmSelected, describeHex, describeUnit, handleHexClick, undoSelectedMove, type InputDeps } from './ui/input';
+import { createRenderer, type BoardCallbacks } from './view/render';
+import { UnitModelLayer } from './view/render3d';
+import { canProduce, produce, reachable, resupplyFromAdjacentSupply, settleCaptures } from './game/rules';
+import { airportAt, createGame, liveUnits, tileAt, townAt, unitAt } from './game/state';
+import { showSettingsScreen } from './ui/settings';
+import { playAttackSfx, playCaptureSfx, playExplosionSfx, playMoveSfx } from './audio/sfx';
+import { speak, stopSpeaking } from './audio/voicevox';
+import { getTheme } from './game/themes';
+import { validateUnitDefs } from './game/validate';
+import { DEFAULT_SETTINGS, type GameSettings } from './game/types';
+import { beginCpuTurn, finishEnemyTurn } from './game/turn';
+import { distance, key } from './game/hex';
+import type { Game, MapData, ThemeId, Tile, Unit, UnitDefs } from './game/types';
+import { createHud, type ContextAction } from './ui/ui';
 
-const ENEMY_START_DELAY_MS = 300;
 const ENEMY_STEP_DELAY_MS = 450;
+/** プレイヤー側委任の思考時間の上限(ms)。「もう打ってよい」でも打ち切れる */
+const DELEGATION_BUDGET_MS = 30_000;
 
-// AI Worker Pool の入れ物(生成のみ。思考は当面 src/ai.ts の簡易AI)
-const aiPool = new AiWorkerPool();
-void aiPool;
+// AI思考用 Worker(思考はメインスレッドを止めない)
+const aiPool = new AiWorkerPool(1);
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 const container = document.getElementById('game-container');
 if (!container) throw new Error('#game-container が見つかりません');
@@ -101,6 +106,7 @@ function refresh(): void {
 }
 
 function startGame(settings: GameSettings): boolean {
+  settings = { ...DEFAULT_SETTINGS, ...settings }; // 旧セーブなど新項目が無い設定でも既定値で補う
   lastSettings = settings;
   try {
     const theme = getTheme(settings.theme);
@@ -113,6 +119,8 @@ function startGame(settings: GameSettings): boolean {
     return false;
   }
   hud.setup(game);
+  hud.clearLog();
+  stopSpeaking();
   renderer.start(game, boardCallbacks);
   // 3Dモデルは現代テーマのみ(他テーマは2D駒表示)
   if (settings.theme === 'modern') {
@@ -142,6 +150,68 @@ function newGame(): void {
   showSettingsScreen(lastSettings, startGame);
 }
 
+/** AIの言語化: 字幕ログ(設定でONのとき)と VOICEVOX 音声(設定でONのとき)へ流す */
+function narrate(g: Game, line: string): void {
+  if (g.settings.subtitles) hud.appendLog(line);
+  if (g.settings.voice) speak(line);
+}
+
+/**
+ * 現在の盤面をセーブ形式で Worker へ送り、行動リストを受け取る。
+ * 行動リストのユニット番号はセーブ形式(生存ユニットのみ)の番号なので、実ゲームの番号へ変換して返す
+ */
+async function requestPlan(g: Game, partial: Omit<AiThinkRequest, 'save' | 'defs' | 'map'>): Promise<AiAction[]> {
+  const save = makeSaveData(g);
+  const alive = g.units.filter((u) => u.hp > 0);
+  const toLive = (i: number): number => (alive[i] ? g.units.indexOf(alive[i]) : -1);
+  const res = await aiPool.think(
+    { save, defs: g.defs, map: mapData, ...partial },
+    (line) => narrate(g, line),
+  );
+  const out: AiAction[] = [];
+  for (const a of res.actions) {
+    switch (a.type) {
+      case 'produce':
+        out.push(a);
+        break;
+      case 'move':
+      case 'confirm': {
+        const u = toLive(a.unit);
+        if (u >= 0) out.push({ ...a, unit: u });
+        break;
+      }
+      case 'attack': {
+        const u = toLive(a.unit);
+        const t = toLive(a.target);
+        if (u >= 0 && t >= 0) out.push({ ...a, unit: u, target: t });
+        break;
+      }
+      case 'board': {
+        const u = toLive(a.unit);
+        const c = toLive(a.carrier);
+        if (u >= 0 && c >= 0) out.push({ ...a, unit: u, carrier: c });
+        break;
+      }
+      case 'disembark': {
+        const c = toLive(a.carrier);
+        if (c >= 0) out.push({ ...a, carrier: c });
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/** 行動リストを1手ずつ、実エンジンで再検証しながら実行し、盤面を見せながら進める */
+async function executeActionsAnimated(g: Game, side: 'p' | 'e', actions: AiAction[]): Promise<void> {
+  for (const a of actions) {
+    if (g.over) break;
+    executePlan(g, side, [a]);
+    refresh();
+    await sleep(ENEMY_STEP_DELAY_MS);
+  }
+}
+
 function endTurn(): void {
   const g = current();
   if (g.over || g.busy) return;
@@ -152,23 +222,139 @@ function endTurn(): void {
   g.selected = null;
   g.reach = null;
   g.busy = true;
-  const actors = beginEnemyTurn(g);
+  beginCpuTurn(g);
   g.message = '敵のターン…';
   refresh();
 
-  let i = 0;
-  const step = (): void => {
-    if (g.over) return refresh();
-    if (i >= actors.length) {
-      finishEnemyTurn(g);
-      return refresh();
+  void (async () => {
+    try {
+      const actions = await requestPlan(g, {
+        side: 'e',
+        budgetMs: g.settings.aiThinkMs,
+        personality: g.settings.aiPersonality,
+      });
+      await executeActionsAnimated(g, 'e', actions);
+    } catch {
+      // Worker が使えない場合は旧AIでターンを続行する
+      enemyProduce(g);
+      for (const u of liveUnits(g, 'e')) {
+        if (g.over) break;
+        if (!u.acted && u.hp > 0) enemyAct(g, u);
+        refresh();
+        await sleep(ENEMY_STEP_DELAY_MS);
+      }
     }
-    const u = actors[i++];
-    if (u.hp > 0) enemyAct(g, u);
+    finishEnemyTurn(g);
     refresh();
-    setTimeout(step, ENEMY_STEP_DELAY_MS);
-  };
-  setTimeout(step, ENEMY_START_DELAY_MS);
+  })();
+}
+
+/** 目標ヘックスの表示名 */
+function objectiveName(g: Game, t: Tile): string {
+  const town = townAt(g, t);
+  if (town) return town.name;
+  const airport = airportAt(g, t);
+  if (airport) return airport.name;
+  if (t.city?.capital === 'e') return '敵首都';
+  if (t.city?.capital === 'p') return '自軍首都';
+  return '目標地点';
+}
+
+/** 師団の初期目標: 最寄りの未占領 town。無ければ敵首都 */
+function defaultObjectiveKey(g: Game, u: Unit): string {
+  let best: Tile | null = null;
+  let bestDist = Infinity;
+  for (const t of g.towns) {
+    if (t.owner === 'p') continue;
+    const tile = g.tilesById.get(t.hexId);
+    if (!tile) continue;
+    const d = distance(u, tile);
+    if (d < bestDist) { bestDist = d; best = tile; }
+  }
+  if (!best) {
+    for (const t of g.tiles.values()) {
+      if (t.city?.capital === 'e') { best = t; break; }
+    }
+  }
+  return best ? key(best) : key(u);
+}
+
+/** 師団長の指定/解除。全滅した師団(師団長未指定)があれば、そちらへ再指定する */
+function toggleCommander(u: Unit): void {
+  const g = current();
+  const idx = g.units.indexOf(u);
+  const existing = g.delegations.findIndex((d) => d.unit === idx);
+  if (existing >= 0) {
+    g.delegations.splice(existing, 1);
+    g.message = '師団長を解除しました。';
+    refresh();
+    return;
+  }
+  const orphan = g.delegations.find((d) => d.unit < 0 || !g.units[d.unit] || g.units[d.unit].hp <= 0);
+  if (orphan) {
+    orphan.unit = idx;
+    g.message = `${g.defs[u.kind].name} を師団長に再指定しました。`;
+    refresh();
+    return;
+  }
+  g.delegations.push({ unit: idx, objectiveKey: defaultObjectiveKey(g, u) });
+  g.message = `${g.defs[u.kind].name} を師団長に指定しました。目標は師団パネルで変更できます。`;
+  refresh();
+}
+
+/** 師団を委任実行する。師団長と周囲8ヘックス以内の未行動ユニットだけが動く(生産は委任しない) */
+async function runDelegation(di: number): Promise<boolean> {
+  const g = current();
+  if (g.busy || g.over) return false;
+  const del = g.delegations[di];
+  if (!del || del.unit < 0) return false;
+  const cmd = g.units[del.unit];
+  if (!cmd || cmd.hp <= 0) {
+    g.message = '師団長が全滅しています。部隊表の ⚑ で別のユニットを指定してください。';
+    refresh();
+    return false;
+  }
+  if (cmd.acted) {
+    g.message = '師団長は行動済みのため、今ターンは委任できません。';
+    refresh();
+    return false;
+  }
+  const objTile = g.tiles.get(del.objectiveKey);
+  if (!objTile) return false;
+  // 範囲内の未行動ユニット(実ゲームのインデックス)を集め、セーブ形式のインデックスへ変換する
+  const alive = g.units.filter((x) => x.hp > 0);
+  const liveToSave = new Map<number, number>();
+  alive.forEach((x, si) => liveToSave.set(g.units.indexOf(x), si));
+  const scopeIndices: number[] = [];
+  g.units.forEach((x, i) => {
+    if (x.side === 'p' && x.hp > 0 && !x.acted && !x.carriedBy && distance(x, cmd) <= 8) {
+      const si = liveToSave.get(i);
+      if (si !== undefined) scopeIndices.push(si);
+    }
+  });
+  g.busy = true;
+  hud.setThinking(true);
+  g.message = `師団${di + 1}が行動中…`;
+  refresh();
+  try {
+    const actions = await requestPlan(g, {
+      side: 'p',
+      budgetMs: DELEGATION_BUDGET_MS,
+      personality: 'balanced',
+      delegated: true,
+      scopeIndices,
+      fixedObjective: { at: { x: objTile.x, y: objTile.y, z: objTile.z }, name: objectiveName(g, objTile) },
+    });
+    await executeActionsAnimated(g, 'p', actions);
+    settleCaptures(g, 'p');
+    g.message = `師団${di + 1}の委任行動が終わりました。`;
+  } catch {
+    g.message = '委任に失敗しました。';
+  }
+  hud.setThinking(false);
+  g.busy = false;
+  refresh();
+  return true;
 }
 
 const hud = createHud({
@@ -210,7 +396,9 @@ const hud = createHud({
     g.pinnedInfo = null;
     g.selected = u;
     g.selectedHex = tileAt(g, u) ?? null;
-    g.reach = null;
+    // 盤面クリックで選択したときと同じく、移動範囲を表示する(表示されないと次のクリックが行動確定になってしまう)
+    if (!u.moved && !u.acted) resupplyFromAdjacentSupply(g, u);
+    g.reach = u.moved || u.acted ? null : reachable(g, u);
     renderer.focusOn(u);
     refresh();
   },
@@ -219,6 +407,33 @@ const hud = createHud({
     const world = renderer.worldSize();
     renderer.centerOnWorld(world.x + fx * world.w, world.y + fy * world.h);
     hud.drawMinimap(g, renderer.getViewport(), world);
+  },
+  onToggleCommander: (u) => toggleCommander(u),
+  onSetObjective: (di, objectiveKey) => {
+    const g = current();
+    if (g.delegations[di]) g.delegations[di].objectiveKey = objectiveKey;
+    refresh();
+  },
+  onRunDelegation: (di) => {
+    void runDelegation(di);
+  },
+  onReleaseDelegation: (di) => {
+    const g = current();
+    g.delegations.splice(di, 1);
+    g.message = '師団を解散しました。';
+    refresh();
+  },
+  onRunAllDelegations: () => {
+    void (async () => {
+      const g = current();
+      for (let di = 0; di < g.delegations.length; di++) {
+        if (g.over) break;
+        await runDelegation(di);
+      }
+    })();
+  },
+  onStopThinking: () => {
+    void aiPool.requestStop();
   },
 });
 

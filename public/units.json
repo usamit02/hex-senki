@@ -152,7 +152,7 @@
       "model": "heli",
       "canCapture": false,
       "moveSfx": "rotor",
-      "transport": true,
+      "transport": 1,
       "weapons": [
         {
           "name": "対戦車ミサイル",
@@ -281,7 +281,7 @@
       "canCapture": false,
       "moveSfx": "engine",
       "weapons": [],
-      "transport": true
+      "transport": 1
     },
     "ground_supply": {
       "name": "補給車",
@@ -539,7 +539,7 @@
       "canCapture": false,
       "moveSfx": "hoof",
       "weapons": [],
-      "transport": true
+      "transport": 1
     },
     "fantasy_dragon": {
       "name": "ドラゴン",
@@ -793,7 +793,7 @@
       "canCapture": false,
       "moveSfx": "wheel",
       "weapons": [],
-      "transport": true
+      "transport": 1
     },
     "sengoku_cannon": {
       "name": "大筒隊",
@@ -984,7 +984,7 @@
       "model": "",
       "canCapture": false,
       "moveSfx": "engine",
-      "transport": true,
+      "transport": 6,
       "weapons": [
         {
           "name": "主砲",

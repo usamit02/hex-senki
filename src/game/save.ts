@@ -29,6 +29,8 @@ export interface SaveData {
   }>;
   towns: Array<{ hexId: number; owner: Side | null }>;
   airports?: Array<{ hexId: number; owner: Side | null }>;
+  /** プレイヤー側の師団指定。unit は保存時の units 配列(生存ユニットのみ)のインデックス。-1 は師団長未指定 */
+  delegations?: Array<{ unit: number; objectiveKey: string }>;
 }
 
 export interface SaveEntry {
@@ -81,6 +83,10 @@ export function makeSaveData(g: Game): SaveData {
       }),
     towns: g.towns.map((t) => ({ hexId: t.hexId, owner: t.owner })),
     airports: g.airports.map((a) => ({ hexId: a.hexId, owner: a.owner })),
+    delegations: (g.delegations ?? []).map((d) => {
+      const u = d.unit >= 0 ? g.units[d.unit] : undefined;
+      return { unit: u && u.hp > 0 ? (indexOf.get(u) ?? -1) : -1, objectiveKey: d.objectiveKey };
+    }),
   };
 }
 
@@ -135,6 +141,11 @@ export function applySave(g: Game, data: SaveData): void {
     const airport = g.airports.find((a) => a.hexId === sa.hexId);
     if (airport) airport.owner = sa.owner;
   }
+  // 師団指定を復元する(保存時の units は生存ユニットのみで、復元後も同じ並びになる)
+  g.delegations = (data.delegations ?? []).map((d) => ({
+    unit: d.unit >= 0 && units[d.unit] ? d.unit : -1,
+    objectiveKey: d.objectiveKey,
+  }));
   g.selected = null;
   g.selectedHex = null;
   g.reach = null;
