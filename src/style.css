@@ -11,7 +11,8 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:"Hiragino Sans","
 #game-container canvas{display:block}
 
 /* 常時表示は最小限(ターン・資金のみ、半透明チップ) */
-#hud-chip{position:fixed;top:8px;left:8px;z-index:20;display:flex;gap:6px;pointer-events:none}
+#gd{font-weight:600;margin:2px 0 6px}
+#pane-bottom .bar .stat{align-self:center;font-weight:600;margin-right:4px}
 .stat{background:color-mix(in srgb,var(--card) 82%,transparent);border:1px solid var(--line);border-radius:6px;padding:2px 10px;font-size:.85rem;color:var(--fg);backdrop-filter:blur(3px)}
 
 /* 画面端のタブ */
@@ -96,7 +97,8 @@ button.big{width:100%;padding:10px;font-size:1.05rem}
 #battle-popup.show{animation:battlefade 3s ease forwards}
 @keyframes battlefade{0%{opacity:0;transform:translateX(-50%) translateY(-8px)}10%{opacity:1;transform:translateX(-50%) translateY(0)}75%{opacity:1}100%{opacity:0}}
 
-#pane-left .pin-btn{top:auto;bottom:10px;right:10px}
+#pane-left .pin-btn{top:6px;left:8px;right:auto;bottom:auto}
+#pane-left h2:first-of-type{margin-left:34px}
 .top-tools{display:flex;gap:6px;margin:0 0 6px}
 .top-tools button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:3px 10px;cursor:pointer;font-size:.85rem}
 .top-tools button.active{background:rgba(70,130,200,.4);border-color:rgba(140,190,255,.8)}

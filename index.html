@@ -25,11 +25,6 @@
   <!-- 要件3: マップをブラウザ全面に表示。操作・情報は右クリックメニューと隠れるペインで行う -->
   <div id="game-container" aria-label="ゲーム盤"></div>
 
-  <!-- 常時表示は最小限: ターンと資金だけ -->
-  <div id="hud-chip">
-    <span class="stat" id="tn"></span><span class="stat" id="gd"></span>
-  </div>
-
   <!-- 画面端のタブ(ペインの開閉) -->
   <button id="tab-left" class="edge-tab edge-left" title="情報ペイン">情報</button>
   <button id="tab-right" class="edge-tab edge-right" title="生産ペイン">生産</button>
@@ -40,6 +35,7 @@
   <aside id="pane-left" class="pane pane-left">
     <button class="pin-btn" data-pin="left" type="button" title="出しっぱなしにする">📌</button>
     <h2>情報</h2>
+    <div id="gd" class="stat"></div>
     <div id="info">ヘックスやユニットをクリックすると情報が表示されます。</div>
     <h2 class="mm-title">全体図</h2>
     <canvas id="minimap" width="440" height="200"></canvas>
@@ -88,11 +84,14 @@
     <button class="pin-btn" data-pin="bottom" type="button" title="出しっぱなしにする">📌</button>
     <div id="msg"></div>
     <div class="bar">
+      <span class="stat" id="tn"></span>
       <button id="be" class="go">ターン終了</button>
       <button id="bf">全体表示</button>
       <button id="bn">新規ゲーム</button>
       <button id="bsv">セーブ</button>
       <button id="bld">ロード</button>
+      <button id="btn-spectate" type="button">CPU対CPU観戦</button>
+      <button id="btn-spectate-stop" type="button" hidden>観戦停止</button>
     </div>
     <div id="ai-log" aria-label="作戦ログ"></div>
     <details>

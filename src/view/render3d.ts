@@ -120,7 +120,8 @@ export class UnitModelLayer {
         const capP = g.towns.find((t) => t.capital === 'p');
         const capE = g.towns.find((t) => t.capital === 'e');
         const leftSide = capP && capE ? (capP.col <= capE.col ? 'p' : 'e') : 'p';
-        inst.model.rotation.y = v.unit.side === leftSide ? ACTED_YAW : -ACTED_YAW;
+        // 左側陣営は右斜め前(-π/6)。右側陣営は正面を左へ向けた上で同じ傾きにする(π+π/6 = 左斜め前)
+        inst.model.rotation.y = v.unit.side === leftSide ? ACTED_YAW : Math.PI - ACTED_YAW;
       } else {
         inst.model.rotation.y += ROTATE_SPEED * dt;
       }

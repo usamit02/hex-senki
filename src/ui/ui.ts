@@ -1,8 +1,8 @@
 import { canProduce } from '../game/rules';
-import { income, liveUnits, producibleHexKeys } from '../game/state';
+import { income, producibleHexKeys } from '../game/state';
 import { key } from '../game/hex';
 import { getTheme } from '../game/themes';
-import { MAX_UNITS_PER_SIDE, type Game, type Unit } from '../game/types';
+import type { Game, Unit } from '../game/types';
 
 export interface HudHandlers {
   onProduce(kind: string): void;
@@ -27,6 +27,10 @@ export interface HudHandlers {
   onRunAllDelegations(): void;
   /** 委任思考の「もう打ってよい」 */
   onStopThinking(): void;
+  /** CPU対CPU観戦を開始(AI設計テスト用。AI完成後に削除予定) */
+  onStartSpectate(): void;
+  /** 観戦を停止 */
+  onStopSpectate(): void;
 }
 
 export interface ContextAction {
@@ -56,6 +60,8 @@ export interface Hud {
   clearLog(): void;
   /** 思考中表示(「もう打ってよい」ボタンの出し入れ) */
   setThinking(on: boolean): void;
+  /** 観戦中表示(開始/停止ボタンの出し入れ) */
+  setSpectating(on: boolean): void;
 }
 
 const el = <T extends HTMLElement>(id: string): T => {
@@ -151,6 +157,10 @@ export function createHud(handlers: HudHandlers): Hud {
   const btnStop = el<HTMLButtonElement>('btn-stop-thinking');
   btnStop.onclick = () => handlers.onStopThinking();
   el<HTMLButtonElement>('btn-run-all-delegations').onclick = () => handlers.onRunAllDelegations();
+  const btnSpectate = el<HTMLButtonElement>('btn-spectate');
+  const btnSpectateStop = el<HTMLButtonElement>('btn-spectate-stop');
+  btnSpectate.onclick = () => handlers.onStartSpectate();
+  btnSpectateStop.onclick = () => handlers.onStopSpectate();
   const aiLog = el('ai-log');
   let minimapDrag = false;
   const minimapPan = (e: PointerEvent): void => {
@@ -211,7 +221,7 @@ export function createHud(handlers: HudHandlers): Hud {
     update(g) {
       lastGame = g;
       turnLabel.textContent = `ターン ${g.turn}`;
-      goldLabel.textContent = `資金 ${g.gold.p}(+${income(g, 'p')}) / 部隊 ${liveUnits(g, 'p').length}/${MAX_UNITS_PER_SIDE}`;
+      goldLabel.textContent = `資金 ${g.gold.p}(次ターン +${income(g, 'p')})`;
       message.textContent = g.message;
       const t = g.selectedHex;
       const producible = !!t && producibleHexKeys(g, 'p').has(key(t));
@@ -373,6 +383,10 @@ export function createHud(handlers: HudHandlers): Hud {
     },
     setThinking(on) {
       btnStop.hidden = !on;
+    },
+    setSpectating(on) {
+      btnSpectate.hidden = on;
+      btnSpectateStop.hidden = !on;
     },
     openPane,
     drawMinimap(g, viewport, world) {

@@ -58,6 +58,10 @@ export interface Renderer {
   getViewport(): { x: number; y: number; w: number; h: number } | null;
   /** ワールド座標の中心へスクロールする(ミニマップ用) */
   centerOnWorld(x: number, y: number): void;
+  /** 指定ヘックスを画面中央に表示する(拡大縮小は変えない) */
+  centerOnTile(at: Cube): void;
+  /** 指定ヘックスが現在の表示範囲内にあるか */
+  isVisible(at: Cube): boolean;
   /** ユニットを画面中央に寄せる(部隊表用) */
   focusOn(u: Unit): void;
   worldSize(): { x: number; y: number; w: number; h: number };
@@ -283,32 +287,42 @@ class BoardScene extends Phaser.Scene {
     this.cameras.main.shake(220, 0.003);
   }
 
-  /** 占領時の旗立てアニメーション(旗が上がる) */
+  /** 占領時の旗立てアニメーション(旗が上がる)。小さくて見えない問題があったため大きく長く表示する */
   playCaptureFx(at: Cube, side: 'p' | 'e'): void {
     const { x, y } = toPixel(at, HEX_SIZE);
     const color = side === 'p' ? 0x2b6fd2 : 0xd23b2e;
-    const fx = this.add.container(x, y).setDepth(9);
+    const S = HEX_SIZE;
+    const fx = this.add.container(x, y).setDepth(20);
     const gr = this.add.graphics();
-    gr.lineStyle(4, 0xe8e8e8, 1);
-    gr.lineBetween(0, HEX_SIZE * 0.42, 0, -HEX_SIZE * 0.5);
-    gr.fillStyle(color, 1);
-    gr.fillTriangle(0, -HEX_SIZE * 0.5, 0, -HEX_SIZE * 0.18, HEX_SIZE * 0.42, -HEX_SIZE * 0.34);
+    // ポール(ヘックスの上端よりさらに上まで伸ばす)
+    gr.lineStyle(6, 0xf2f2f2, 1);
+    gr.lineBetween(0, S * 0.45, 0, -S * 1.05);
+    // 旗(大きめの三角旗+白い縁)
     gr.fillStyle(0xffffff, 1);
-    gr.fillCircle(0, -HEX_SIZE * 0.5, 3);
+    gr.fillTriangle(0, -S * 1.08, 0, -S * 0.5, S * 0.78, -S * 0.79);
+    gr.fillStyle(color, 1);
+    gr.fillTriangle(0, -S * 1.0, 0, -S * 0.58, S * 0.66, -S * 0.79);
+    gr.fillStyle(0xffffff, 1);
+    gr.fillCircle(0, -S * 1.05, 5);
+    // 根元のリング(広がって消える)
+    gr.lineStyle(4, color, 0.9);
+    gr.strokeCircle(0, S * 0.42, S * 0.16);
     fx.add(gr);
     fx.setScale(1, 0);
-    fx.setAlpha(0.4);
+    fx.setAlpha(0.5);
     this.tweens.add({
-      targets: fx, scaleY: 1, alpha: 1, duration: 650, ease: 'Back.easeOut',
+      targets: fx, scaleY: 1, alpha: 1, duration: 550, ease: 'Back.easeOut',
       onComplete: () => {
-        this.tweens.add({ targets: fx, alpha: 0, duration: 500, delay: 700, onComplete: () => fx.destroy() });
+        this.tweens.add({ targets: fx, alpha: 0, duration: 600, delay: 1400, onComplete: () => fx.destroy() });
       },
     });
   }
 
   getViewport(): { x: number; y: number; w: number; h: number } {
-    const wv = this.cameras.main.worldView;
-    return { x: wv.x, y: wv.y, w: wv.width, h: wv.height };
+    // worldView は描画フレームで更新されるため、カメラ移動直後は古いことがある。
+    // scroll と zoom から同期的に計算する
+    const cam = this.cameras.main;
+    return { x: cam.scrollX, y: cam.scrollY, w: cam.width / cam.zoom, h: cam.height / cam.zoom };
   }
 
   centerOnWorld(x: number, y: number): void {
@@ -317,6 +331,20 @@ class BoardScene extends Phaser.Scene {
       Phaser.Math.Clamp(x, b.x, b.x + b.w),
       Phaser.Math.Clamp(y, b.y, b.y + b.h),
     );
+  }
+
+  /** 指定ヘックスを画面中央へ(ズームは変更しない) */
+  centerOnTile(at: Cube): void {
+    const { x, y } = toPixel(at, HEX_SIZE);
+    this.centerOnWorld(x, y);
+  }
+
+  /** 指定ヘックスが表示範囲内にあるか(端の余白ぶんは内側とみなす) */
+  isVisible(at: Cube): boolean {
+    const { x, y } = toPixel(at, HEX_SIZE);
+    const wv = this.getViewport();
+    const m = HEX_SIZE * 2;
+    return x >= wv.x + m && x <= wv.x + wv.w - m && y >= wv.y + m && y <= wv.y + wv.h - m;
   }
 
   /** HP数字ラベルを各ユニットの画面位置に合わせる(毎フレーム) */
@@ -634,15 +662,17 @@ class BoardScene extends Phaser.Scene {
         gtw.fillRect(x - S * 0.2, y - S * 0.02, S * 0.05, S * 0.07);
         gtw.fillRect(x + S * 0.1, y + S * 0.08, S * 0.05, S * 0.07);
       } else {
-        // village: 屋根のある小さな家を2軒
+        // village: 屋根のある家を2軒(他の段より小さく見えるため 1.5 倍に拡大して描く)
+        const V = S * 1.5;
+        const vy = y + S * 0.04;
         gtw.fillStyle(0x6b4a2f, 1);
-        gtw.fillTriangle(x - S * 0.3, y + S * 0.02, x - S * 0.05, y + S * 0.02, x - S * 0.175, y - S * 0.14);
-        gtw.fillTriangle(x + S * 0.04, y + S * 0.1, x + S * 0.27, y + S * 0.1, x + S * 0.155, y - S * 0.03);
+        gtw.fillTriangle(x - V * 0.3, vy + V * 0.02, x - V * 0.05, vy + V * 0.02, x - V * 0.175, vy - V * 0.14);
+        gtw.fillTriangle(x + V * 0.04, vy + V * 0.1, x + V * 0.27, vy + V * 0.1, x + V * 0.155, vy - V * 0.03);
         gtw.fillStyle(0xd8cfc0, 1);
-        gtw.fillRect(x - S * 0.26, y + S * 0.02, S * 0.17, S * 0.2);
-        gtw.fillRect(x + S * 0.07, y + S * 0.1, S * 0.17, S * 0.18);
+        gtw.fillRect(x - V * 0.26, vy + V * 0.02, V * 0.17, V * 0.2);
+        gtw.fillRect(x + V * 0.07, vy + V * 0.1, V * 0.17, V * 0.18);
         gtw.fillStyle(0x6b4a2f, 1);
-        gtw.fillRect(x - S * 0.2, y + S * 0.1, S * 0.06, S * 0.12);
+        gtw.fillRect(x - V * 0.2, vy + V * 0.1, V * 0.06, V * 0.12);
       }
     }
     // 空港: 滑走路+管制塔のアイコンと所有リング(towns と同じ流儀)
@@ -801,6 +831,12 @@ export function createRenderer(parent: HTMLElement): Renderer {
     },
     centerOnWorld(x, y) {
       boardBridge.scene?.centerOnWorld(x, y);
+    },
+    centerOnTile(at) {
+      boardBridge.scene?.centerOnTile(at);
+    },
+    isVisible(at) {
+      return boardBridge.scene ? boardBridge.scene.isVisible(at) : true;
     },
     focusOn(u) {
       boardBridge.scene?.focusOn(u);

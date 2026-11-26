@@ -1,5 +1,4 @@
 import './style.css';
-import { enemyAct, enemyProduce } from './game/ai/ai';
 import { executePlan, type AiAction } from './game/ai/planner';
 import { AiWorkerPool } from './game/ai/pool';
 import type { AiThinkRequest } from './game/ai/protocol';
@@ -10,10 +9,10 @@ import { confirmSelected, describeHex, describeUnit, handleHexClick, undoSelecte
 import { createRenderer, type BoardCallbacks } from './view/render';
 import { UnitModelLayer } from './view/render3d';
 import { canProduce, produce, reachable, resupplyFromAdjacentSupply, settleCaptures } from './game/rules';
-import { airportAt, createGame, liveUnits, tileAt, townAt, unitAt } from './game/state';
+import { airportAt, createGame, tileAt, townAt, unitAt } from './game/state';
 import { showSettingsScreen } from './ui/settings';
 import { playAttackSfx, playCaptureSfx, playExplosionSfx, playMoveSfx } from './audio/sfx';
-import { speak, stopSpeaking } from './audio/voicevox';
+import { checkVoicevox, setVoiceErrorHandler, speak, stopSpeaking, unlockAudio } from './audio/voicevox';
 import { getTheme } from './game/themes';
 import { validateUnitDefs } from './game/validate';
 import { DEFAULT_SETTINGS, type GameSettings } from './game/types';
@@ -118,9 +117,22 @@ function startGame(settings: GameSettings): boolean {
     hud.showError(`ゲームを開始できませんでした: ${detail}`);
     return false;
   }
+  spectating = false;
+  hud.setSpectating(false);
   hud.setup(game);
   hud.clearLog();
   stopSpeaking();
+  // 音声ONのときは、開始時点で VOICEVOX へ接続できるか確認し、再生許可も得ておく
+  if (settings.voice) {
+    unlockAudio();
+    setVoiceErrorHandler((msg) => hud.showError(msg));
+    const started = game;
+    void checkVoicevox().then((reason) => {
+      if (reason && game === started) {
+        hud.showError(`VOICEVOXに接続できませんでした: ${reason}。音声は出ません(字幕ログは動作します)。`);
+      }
+    });
+  }
   renderer.start(game, boardCallbacks);
   // 3Dモデルは現代テーマのみ(他テーマは2D駒表示)
   if (settings.theme === 'modern') {
@@ -202,10 +214,30 @@ async function requestPlan(g: Game, partial: Omit<AiThinkRequest, 'save' | 'defs
   return out;
 }
 
+/** 指定陣営の首都を画面中央に表示する(拡大縮小は変えない) */
+function centerOnCapital(side: 'p' | 'e'): void {
+  const g = current();
+  const t = [...g.tiles.values()].find((t) => t.city?.capital === side);
+  if (t) {
+    renderer.centerOnTile(t);
+    refresh(); // ミニマップの表示範囲も追随させる
+  }
+}
+
 /** 行動リストを1手ずつ、実エンジンで再検証しながら実行し、盤面を見せながら進める */
-async function executeActionsAnimated(g: Game, side: 'p' | 'e', actions: AiAction[]): Promise<void> {
+async function executeActionsAnimated(g: Game, side: 'p' | 'e', actions: AiAction[], follow = false, cancelled?: () => boolean): Promise<void> {
   for (const a of actions) {
-    if (g.over) break;
+    if (g.over || cancelled?.()) break;
+    // 敵のターン(と観戦時): 行動するユニット(または生産ヘックス)が画面外なら、その位置を中央に表示する
+    if (side === 'e' || follow) {
+      const subject: Tile | Unit | undefined = a.type === 'produce'
+        ? g.tiles.get(a.hex)
+        : g.units[a.type === 'disembark' ? a.carrier : a.unit];
+      if (subject && !renderer.isVisible(subject)) {
+        renderer.centerOnTile(subject);
+        await sleep(120);
+      }
+    }
     executePlan(g, side, [a]);
     refresh();
     await sleep(ENEMY_STEP_DELAY_MS);
@@ -225,6 +257,8 @@ function endTurn(): void {
   beginCpuTurn(g);
   g.message = '敵のターン…';
   refresh();
+  // 敵のターン開始: 敵首都を画面中央に表示する
+  centerOnCapital('e');
 
   void (async () => {
     try {
@@ -234,19 +268,100 @@ function endTurn(): void {
         personality: g.settings.aiPersonality,
       });
       await executeActionsAnimated(g, 'e', actions);
-    } catch {
-      // Worker が使えない場合は旧AIでターンを続行する
-      enemyProduce(g);
-      for (const u of liveUnits(g, 'e')) {
-        if (g.over) break;
-        if (!u.acted && u.hp > 0) enemyAct(g, u);
-        refresh();
-        await sleep(ENEMY_STEP_DELAY_MS);
-      }
+    } catch (e) {
+      // Worker が使えない環境ではゲームとして成立しないため、エラーで停止する
+      const detail = e instanceof Error ? e.message : String(e);
+      g.message = 'AI Worker を起動できませんでした。ゲームを停止します。';
+      hud.showError(`AI Worker を起動できませんでした(${detail})。この環境ではゲームを続行できません。`);
+      refresh();
+      return;
     }
     finishEnemyTurn(g);
     refresh();
+    // プレイヤーのターン開始: 自軍首都を画面中央に表示する
+    centerOnCapital('p');
   })();
+}
+
+/**
+ * CPU対CPU観戦(AI設計テスト用。AIが完成したら削除予定の機能)。
+ * 両陣営とも新AIが打ち、盤面で眺められる。
+ * 条件は本番・ベンチマークと同じ: 思考時間は設定値そのまま(最大10分/ターン)、
+ * ターン上限はベンチマーク定義 = fill を除く実マップの (短辺+長辺)/2。
+ * 上限に達したら打ち切り、スコア(占領town数)で結果を表示する
+ */
+let spectating = false;
+
+/** ベンチマーク定義の打ち切りターン数(fill を除く実マップの (短辺+長辺)/2) */
+function spectateTurnCap(g: Game): number {
+  let minC = Infinity, maxC = -Infinity, minR = Infinity, maxR = -Infinity;
+  for (const t of g.tiles.values()) {
+    if (t.terrain === 'fill') continue;
+    minC = Math.min(minC, t.col); maxC = Math.max(maxC, t.col);
+    minR = Math.min(minR, t.row); maxR = Math.max(maxR, t.row);
+  }
+  const w = maxC - minC + 1, h = maxR - minR + 1;
+  return Math.round((Math.min(w, h) + Math.max(w, h)) / 2);
+}
+
+async function runSpectateLoop(): Promise<void> {
+  const g = current();
+  const budgetMs = g.settings.aiThinkMs;
+  const turnCap = spectateTurnCap(g);
+  let cutoff = false;
+  try {
+    while (spectating && !g.over) {
+      if (g.turn > turnCap) { cutoff = true; break; }
+      g.busy = true;
+      g.message = `観戦中: 先手の第${g.turn}ターン(上限${turnCap}ターン)…`;
+      refresh();
+      const pa = await requestPlan(g, { side: 'p', budgetMs, personality: g.settings.aiPersonality });
+      await executeActionsAnimated(g, 'p', pa, true, () => !spectating);
+      if (g.over || !spectating) break;
+      settleCaptures(g, 'p');
+      for (const u of g.units) if (u.side === 'p') { u.moved = true; u.acted = true; }
+      refresh();
+      if (g.over || !spectating) break;
+      beginCpuTurn(g);
+      g.message = `観戦中: 後手の第${g.turn}ターン(上限${turnCap}ターン)…`;
+      refresh();
+      const ea = await requestPlan(g, { side: 'e', budgetMs, personality: g.settings.aiPersonality });
+      await executeActionsAnimated(g, 'e', ea, true, () => !spectating);
+      finishEnemyTurn(g);
+      refresh();
+    }
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    hud.showError(`観戦中にAI Workerを起動できませんでした(${detail})。観戦を停止します。`);
+  }
+  spectating = false;
+  hud.setSpectating(false);
+  if (cutoff && !g.over) {
+    // 打ち切り: スコア(占領town数)で結果を表示して終了する
+    const pTowns = g.towns.filter((t) => t.owner === 'p').length;
+    const eTowns = g.towns.filter((t) => t.owner === 'e').length;
+    const result = pTowns > eTowns ? '先手の勝ち' : eTowns > pTowns ? '後手の勝ち' : '引き分け';
+    g.over = true;
+    g.message = `打ち切り(第${turnCap}ターン): スコア 先手 ${pTowns} - ${eTowns} 後手。${result}です。`;
+    hud.appendLog(`観戦結果(打ち切り): 先手 ${pTowns} - ${eTowns} 後手、${result}。`);
+  } else if (!g.over) {
+    g.busy = false;
+    g.message = '観戦を終了しました。あなたのターンです。';
+  }
+  refresh();
+}
+
+function startSpectate(): void {
+  const g = current();
+  if (spectating || g.busy || g.over) return;
+  spectating = true;
+  hud.setSpectating(true);
+  void runSpectateLoop();
+}
+
+function stopSpectate(): void {
+  spectating = false;
+  void aiPool.requestStop();
 }
 
 /** 目標ヘックスの表示名 */
@@ -434,6 +549,12 @@ const hud = createHud({
   },
   onStopThinking: () => {
     void aiPool.requestStop();
+  },
+  onStartSpectate: () => {
+    startSpectate();
+  },
+  onStopSpectate: () => {
+    stopSpectate();
   },
 });
 
