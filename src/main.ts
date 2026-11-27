@@ -5,14 +5,14 @@ import type { AiThinkRequest } from './game/ai/protocol';
 import { loadMap, loadThemeUnitDefs } from './game/data';
 import { addSave, applySave, deleteSave, listSaves, makeSaveData, type SaveData } from './game/save';
 import { showSaveScreen } from './ui/savescreen';
-import { confirmSelected, describeHex, describeUnit, handleHexClick, undoSelectedMove, type InputDeps } from './ui/input';
+import { confirmSelected, describeHex, describeIncome, describeUnit, handleHexClick, undoSelectedMove, type InputDeps } from './ui/input';
 import { createRenderer, type BoardCallbacks } from './view/render';
 import { UnitModelLayer } from './view/render3d';
 import { canProduce, produce, reachable, resupplyFromAdjacentSupply, settleCaptures } from './game/rules';
 import { airportAt, createGame, tileAt, townAt, unitAt } from './game/state';
 import { showSettingsScreen } from './ui/settings';
 import { playAttackSfx, playCaptureSfx, playExplosionSfx, playMoveSfx } from './audio/sfx';
-import { checkVoicevox, setVoiceErrorHandler, speak, stopSpeaking, unlockAudio } from './audio/voicevox';
+import { checkVoicevox, dropQueued, setSpeechListener, setVoiceErrorHandler, speak, stopSpeaking, unlockAudio, type SpeechChannel } from './audio/voicevox';
 import { getTheme } from './game/themes';
 import { validateUnitDefs } from './game/validate';
 import { DEFAULT_SETTINGS, type GameSettings } from './game/types';
@@ -123,13 +123,16 @@ function startGame(settings: GameSettings): boolean {
   hud.clearLog();
   stopSpeaking();
   // 音声ONのときは、開始時点で VOICEVOX へ接続できるか確認し、再生許可も得ておく
+  cmdEnabled = settings.voice;
+  if (game && game.allySpeaker === undefined) game.allySpeaker = settings.voiceSpeakerAlly;
+  cmdSpeakers = { enemy: settings.voiceSpeaker, ally: game?.allySpeaker ?? settings.voiceSpeakerAlly };
   if (settings.voice) {
     unlockAudio();
     setVoiceErrorHandler((msg) => hud.showError(msg));
     const started = game;
-    void checkVoicevox().then((reason) => {
+    void checkVoicevox(settings.voiceSpeaker).then((reason) => {
       if (reason && game === started) {
-        hud.showError(`VOICEVOXに接続できませんでした: ${reason}。音声は出ません(字幕ログは動作します)。`);
+        hud.showError(`VOICEVOXを使用できません: ${reason}。音声は出ません(字幕ログは動作します)。`);
       }
     });
   }
@@ -154,6 +157,7 @@ function startFromSave(data: SaveData): boolean {
     hud.showError(`セーブデータを読み込めませんでした: ${detail}`);
     return false;
   }
+  cmdSpeakers.ally = game.allySpeaker ?? game.settings.voiceSpeakerAlly;
   refresh();
   return true;
 }
@@ -163,22 +167,144 @@ function newGame(): void {
 }
 
 /** AIの言語化: 字幕ログ(設定でONのとき)と VOICEVOX 音声(設定でONのとき)へ流す */
-function narrate(g: Game, line: string): void {
+function narrate(g: Game, line: string, channel: SpeechChannel = 'enemy', tag?: string): void {
   if (g.settings.subtitles) hud.appendLog(line);
-  if (g.settings.voice) speak(line);
+  if (g.settings.voice) {
+    const speaker = channel === 'ally' ? (g.allySpeaker ?? g.settings.voiceSpeakerAlly) : g.settings.voiceSpeaker;
+    speak(line, speaker, channel, tag);
+  }
+}
+
+/** CPUターン開始時の状況読み上げ(状況表の内容を1行で。思考の待ち時間を持たせる)。
+ * tag='situation' を付け、戦略目標の行が来たら待ち行列から譲らせる(優先して喋らせる) */
+function narrateSituation(g: Game, channel: SpeechChannel = 'enemy'): void {
+  const pT = g.towns.filter((t) => t.owner === 'p').length;
+  const eT = g.towns.filter((t) => t.owner === 'e').length;
+  const pU = g.units.filter((u) => u.side === 'p' && u.hp > 0).length;
+  const eU = g.units.filter((u) => u.side === 'e' && u.hp > 0).length;
+  narrate(g, `第${g.turn}ターン。先手: 都市${pT}、部隊${pU}。後手: 都市${eT}、部隊${eU}。`, channel, 'situation');
+}
+
+// ---------- 司令官の立ち絵(VOICEVOX読み上げ連動) ----------
+type CmdExpression = 'normal' | 'smile' | 'troubled';
+let cmdEnabled = false;
+let cmdSpeakers: Record<SpeechChannel, number> = { enemy: 8, ally: 3 };
+
+/** 話者IDから立ち絵セットを引く(画像があるキャラクターのみ。他の声では吹き出しだけ出す) */
+function portraitSet(speaker: number): { base: string; ext: string } | null {
+  if (speaker === 8) return { base: 'portraits/tsumugi', ext: 'png' };
+  if (speaker === 3) return { base: 'portraits/zunda', ext: 'jpg' };
+  return null;
+}
+
+function expressionFor(line: string): CmdExpression {
+  if (/撃破された|失った|危機|後退|苦しい|まずい/.test(line)) return 'troubled';
+  if (/撃破|占領|確保|制圧|よし|いいぞ/.test(line)) return 'smile';
+  return 'normal';
+}
+
+interface CmdPanel {
+  box: HTMLElement | null;
+  img: HTMLImageElement | null;
+  bubble: HTMLElement | null;
+  expr: CmdExpression;
+  mouthTimer: number | null;
+  hideTimer: number | null;
+}
+const cmdPanels: Record<SpeechChannel, CmdPanel> = {
+  enemy: { box: null, img: null, bubble: null, expr: 'normal', mouthTimer: null, hideTimer: null },
+  ally: { box: null, img: null, bubble: null, expr: 'normal', mouthTimer: null, hideTimer: null },
+};
+
+function cmdSrc(channel: SpeechChannel, expr: CmdExpression, mouth: 'open' | 'closed'): string | null {
+  const set = portraitSet(cmdSpeakers[channel]);
+  return set ? `${set.base}-${expr}-${mouth}.${set.ext}` : null;
+}
+
+function stopMouth(p: CmdPanel): void {
+  if (p.mouthTimer !== null) { clearInterval(p.mouthTimer); p.mouthTimer = null; }
+}
+
+function scheduleHide(p: CmdPanel, ms: number): void {
+  if (p.hideTimer !== null) clearTimeout(p.hideTimer);
+  p.hideTimer = window.setTimeout(() => {
+    p.box?.classList.remove('show');
+    p.hideTimer = null;
+  }, ms);
+}
+
+function setupCommander(): void {
+  cmdPanels.enemy = { ...cmdPanels.enemy, box: document.getElementById('commander'), img: document.getElementById('cmd-img') as HTMLImageElement | null, bubble: document.getElementById('cmd-bubble') };
+  cmdPanels.ally = { ...cmdPanels.ally, box: document.getElementById('commander-ally'), img: document.getElementById('cmd-img-ally') as HTMLImageElement | null, bubble: document.getElementById('cmd-bubble-ally') };
+  // 口パク・表情用の画像を先読みしておく(切り替え時のちらつき防止)
+  for (const speaker of [8, 3]) {
+    const set = portraitSet(speaker);
+    if (!set) continue;
+    for (const e of ['normal', 'smile', 'troubled'] as CmdExpression[]) {
+      for (const m of ['open', 'closed'] as const) { const im = new Image(); im.src = `${set.base}-${e}-${m}.${set.ext}`; }
+    }
+  }
+  setSpeechListener({
+    onLineStart(text, channel) {
+      if (!cmdEnabled) return;
+      const p = cmdPanels[channel];
+      if (!p.box || !p.img || !p.bubble) return;
+      if (p.hideTimer !== null) { clearTimeout(p.hideTimer); p.hideTimer = null; }
+      p.expr = expressionFor(text);
+      p.bubble.textContent = text;
+      const closed = cmdSrc(channel, p.expr, 'closed');
+      if (closed) {
+        p.img.style.display = '';
+        p.img.src = closed;
+      } else {
+        p.img.style.display = 'none'; // 立ち絵の無い声では吹き出しだけ出す
+      }
+      p.box.classList.add('show');
+      // 口パク: その行の再生中だけ、口の開閉画像を交互に切り替える
+      stopMouth(p);
+      if (closed) {
+        let open = false;
+        p.mouthTimer = window.setInterval(() => {
+          open = !open;
+          const src = cmdSrc(channel, p.expr, open ? 'open' : 'closed');
+          if (src && p.img) p.img.src = src;
+        }, 150);
+      }
+    },
+    onLineEnd(_text, channel) {
+      // 行が終わったら口パクを止め、次の行がすぐ来ない場合は画面端へ引っ込める
+      // (表示時間がセリフより長くなりすぎないように、行単位で出し入れする)
+      const p = cmdPanels[channel];
+      stopMouth(p);
+      const closed = cmdSrc(channel, p.expr, 'closed');
+      if (closed && p.img) p.img.src = closed;
+      scheduleHide(p, 350);
+    },
+    onIdle() {
+      for (const channel of ['enemy', 'ally'] as SpeechChannel[]) {
+        const p = cmdPanels[channel];
+        stopMouth(p);
+        scheduleHide(p, 350);
+      }
+    },
+  });
 }
 
 /**
  * 現在の盤面をセーブ形式で Worker へ送り、行動リストを受け取る。
  * 行動リストのユニット番号はセーブ形式(生存ユニットのみ)の番号なので、実ゲームの番号へ変換して返す
  */
-async function requestPlan(g: Game, partial: Omit<AiThinkRequest, 'save' | 'defs' | 'map'>): Promise<AiAction[]> {
+async function requestPlan(g: Game, partial: Omit<AiThinkRequest, 'save' | 'defs' | 'map'>, channel: SpeechChannel = 'enemy'): Promise<AiAction[]> {
   const save = makeSaveData(g);
   const alive = g.units.filter((u) => u.hp > 0);
   const toLive = (i: number): number => (alive[i] ? g.units.indexOf(alive[i]) : -1);
   const res = await aiPool.think(
     { save, defs: g.defs, map: mapData, ...partial },
-    (line) => narrate(g, line),
+    (line) => {
+      // 戦略目標などの本命の行が来たら、まだ喋っていない状況読み上げは譲らせる
+      dropQueued('situation');
+      narrate(g, line, channel);
+    },
   );
   const out: AiAction[] = [];
   for (const a of res.actions) {
@@ -259,6 +385,8 @@ function endTurn(): void {
   refresh();
   // 敵のターン開始: 敵首都を画面中央に表示する
   centerOnCapital('e');
+  // 思考が始まる前に状況表の内容を読み上げて、待ち時間を持たせる
+  narrateSituation(g);
 
   void (async () => {
     try {
@@ -313,9 +441,12 @@ async function runSpectateLoop(): Promise<void> {
     while (spectating && !g.over) {
       if (g.turn > turnCap) { cutoff = true; break; }
       g.busy = true;
+      centerOnCapital('p'); // ターン開始と同時に自首都を表示する
       g.message = `観戦中: 先手の第${g.turn}ターン(上限${turnCap}ターン)…`;
       refresh();
-      const pa = await requestPlan(g, { side: 'p', budgetMs, personality: g.settings.aiPersonality });
+      // 観戦でも先手側は「プレイヤー側師団長」として、味方側の声・右下の立ち絵で喋る
+      narrateSituation(g, 'ally');
+      const pa = await requestPlan(g, { side: 'p', budgetMs, personality: g.settings.aiPersonality }, 'ally');
       await executeActionsAnimated(g, 'p', pa, true, () => !spectating);
       if (g.over || !spectating) break;
       settleCaptures(g, 'p');
@@ -323,11 +454,14 @@ async function runSpectateLoop(): Promise<void> {
       refresh();
       if (g.over || !spectating) break;
       beginCpuTurn(g);
+      centerOnCapital('e'); // ターンが入れ替わった時点で即座に敵首都へ移動する(思考を待たない)
       g.message = `観戦中: 後手の第${g.turn}ターン(上限${turnCap}ターン)…`;
       refresh();
+      narrateSituation(g);
       const ea = await requestPlan(g, { side: 'e', budgetMs, personality: g.settings.aiPersonality });
       await executeActionsAnimated(g, 'e', ea, true, () => !spectating);
       finishEnemyTurn(g);
+      centerOnCapital('p'); // プレイヤーのターンになった時点で即座に自首都へ移動する
       refresh();
     }
   } catch (e) {
@@ -459,7 +593,7 @@ async function runDelegation(di: number): Promise<boolean> {
       delegated: true,
       scopeIndices,
       fixedObjective: { at: { x: objTile.x, y: objTile.y, z: objTile.z }, name: objectiveName(g, objTile) },
-    });
+    }, 'ally');
     await executeActionsAnimated(g, 'p', actions);
     settleCaptures(g, 'p');
     g.message = `師団${di + 1}の委任行動が終わりました。`;
@@ -529,6 +663,12 @@ const hud = createHud({
     if (g.delegations[di]) g.delegations[di].objectiveKey = objectiveKey;
     refresh();
   },
+  onSetAllySpeaker: (speaker) => {
+    const g = current();
+    g.allySpeaker = speaker;
+    cmdSpeakers.ally = speaker; // 立ち絵も声に追随させる
+    refresh();
+  },
   onRunDelegation: (di) => {
     void runDelegation(di);
   },
@@ -549,6 +689,10 @@ const hud = createHud({
   },
   onStopThinking: () => {
     void aiPool.requestStop();
+  },
+  onShowIncome: () => {
+    const g = current();
+    hud.toggleIncome(describeIncome(g));
   },
   onStartSpectate: () => {
     startSpectate();
@@ -586,7 +730,7 @@ const boardCallbacks: BoardCallbacks = {
     g.selectedHex = t;
     // ヘックス情報に、そのマスのユニット情報(燃料含む)も添える
     const occupant = unitAt(g, t);
-    const html = describeHex(g, t) + (occupant ? `<hr>${describeUnit(g, occupant)}` : '');
+    const html = occupant ? `${describeUnit(g, occupant)}<hr>${describeHex(g, t)}` : describeHex(g, t);
     // ユニットが居るヘックスでも、右クリックではヘックス情報を左ペインに固定表示する
     g.pinnedInfo = html;
     hud.showInfo(html);
@@ -620,6 +764,13 @@ const boardCallbacks: BoardCallbacks = {
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', refresh);
 
 async function boot(): Promise<void> {
+  setupCommander();
+  // ゲーム内の右クリック(情報表示・生産メニュー)と競合するため、ブラウザ既定の右クリックメニューを抑止する
+  // (テキスト入力欄の上だけは、貼り付け等のために既定メニューを残す)
+  window.addEventListener('contextmenu', (e) => {
+    if ((e.target as HTMLElement).closest('input, textarea')) return;
+    e.preventDefault();
+  });
   try {
     [mapData, fileDefs] = await Promise.all([loadMap(), loadThemeUnitDefs()]);
     // 起動時のセーブ判定: なければ通常起動、1件だけならそれを読み込み、複数なら選択画面を出す。

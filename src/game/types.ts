@@ -95,8 +95,12 @@ export interface GameSettings {
   aiThinkMs: number;
   /** 敵司令官の性格(PERSONALITIES のキー) */
   aiPersonality: string;
-  /** VOICEVOX の音声を使うか(ゲーム開始時に選択) */
+  /** VOICEVOX の音声を使うか(ゲーム開始時に選択)。既定はON */
   voice: boolean;
+  /** 敵司令官の声(VOICEVOX のスタイルID) */
+  voiceSpeaker: number;
+  /** プレイヤー側師団長の声(VOICEVOX のスタイルID)。敵司令官とは別の声にする */
+  voiceSpeakerAlly: number;
   /** 字幕ログを表示するか(ゲーム開始時に選択) */
   subtitles: boolean;
 }
@@ -113,7 +117,9 @@ export const DEFAULT_SETTINGS: GameSettings = {
   counter: true,
   aiThinkMs: 600_000,
   aiPersonality: 'balanced',
-  voice: false,
+  voice: true,
+  voiceSpeaker: 8,
+  voiceSpeakerAlly: 3,
   subtitles: true,
 };
 
@@ -286,6 +292,8 @@ export interface Game {
   settings: GameSettings;
   /** プレイヤー側の師団編成(師団長ユニットと目標) */
   delegations: Delegation[];
+  /** 師団長(委任時)の声。師団パネルで変更でき、セーブに保存される。未設定なら設定画面の値を使う */
+  allySpeaker?: number;
   width: number;
   height: number;
   tiles: Map<string, Tile>;

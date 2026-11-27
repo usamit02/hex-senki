@@ -1,6 +1,6 @@
 import { distance, key } from '../game/hex';
 import { attack, boardUnit, canBoard, cargoList, cargoOf, confirmUnit, disembarkUnit, inRange, moveCostOf, moveUnit, reachable, resupplyFromAdjacentSupply, undoMove } from '../game/rules';
-import { INCOME_POPULATION_UNIT, linesAt, producibleHexKeys, tileAt, townAt, unitAt } from '../game/state';
+import { INCOME_POPULATION_UNIT, income, linesAt, producibleHexKeys, tileAt, townAt, unitAt } from '../game/state';
 import { TERRAINS } from '../game/terrain';
 import { getTheme } from '../game/themes';
 import type { Cube, Game, Tile, Unit } from '../game/types';
@@ -136,12 +136,6 @@ export function describeHex(g: Game, t: Tile): string {
     lines.push('占領できるのは占領可能なユニットのみ');
   }
   const u = unitAt(g, t);
-  if (u) {
-    const def = g.defs[u.kind];
-    lines.push(`<strong>${u.side === 'p' ? '味方' : '敵'}: ${esc(def.name)}(${def.domain === 'air' ? '航空' : '地上'})</strong>`);
-    lines.push(`HP ${u.hp}/${def.hp} / 移動 ${def.move} / 防御 ${def.defense} / 武装 ${def.weapons.map((w) => w.name).join('・') || 'なし'}`);
-    if (u.side === 'p') lines.push(u.acted ? '行動済み' : u.moved ? '移動済み(攻撃・確定が可能)' : '未行動');
-  }
   const terrain = TERRAINS[t.terrain];
   lines.push(`地形: ${terrain.label}(地上の移動コスト ${terrain.moveCost === Infinity ? '通行不可' : terrain.moveCost} / 地上の防御 +${terrain.defense}、航空は地形無視)`);
   const airport = g.airports.find((a) => a.hexId === t.id);
@@ -160,6 +154,16 @@ export function describeHex(g: Game, t: Tile): string {
     lines.push('<strong>生産可能ヘックス</strong>(下のメニューから生産)');
   }
   return lines.join('<br>');
+}
+
+/** 収入表: 占領済みの市町村を人口の多い順に、人口と収入額つきで一覧にする */
+export function describeIncome(g: Game): string {
+  const rows = g.towns
+    .filter((t) => t.owner === 'p')
+    .sort((a, b) => b.population - a.population)
+    .map((t) => `<tr><td>${esc(t.name)}${t.capital ? '(首都)' : ''}</td><td class="num">${t.population.toLocaleString('ja-JP')}</td><td class="num">+${Math.max(1, Math.floor(t.population / INCOME_POPULATION_UNIT))}</td></tr>`);
+  if (rows.length === 0) return '<b>収入表</b><br>占領済みの市町村がありません。';
+  return `<b>収入表(占領済み市町村)</b><table class="income-table"><tr><th>市町村</th><th>人口</th><th>収入</th></tr>${rows.join('')}<tr><th>合計</th><th></th><th class="num">+${income(g, 'p')}</th></tr></table>`;
 }
 
 /** ユニット情報(左ペイン表示用)。武装と残弾も出す */

@@ -3,6 +3,11 @@ import { income, producibleHexKeys } from '../game/state';
 import { key } from '../game/hex';
 import { getTheme } from '../game/themes';
 import type { Game, Unit } from '../game/types';
+import { FALLBACK_SPEAKERS, fetchSpeakers } from '../audio/voicevox';
+
+/** 師団長の声の選択肢。VOICEVOX に届けば実際の話者一覧に差し替わる */
+let speakerOptions: Array<{ name: string; styleId: number }> = FALLBACK_SPEAKERS;
+void fetchSpeakers().then((list) => { if (list) speakerOptions = list; });
 
 export interface HudHandlers {
   onProduce(kind: string): void;
@@ -19,6 +24,8 @@ export interface HudHandlers {
   onToggleCommander(u: Unit): void;
   /** 師団の目標変更 */
   onSetObjective(dIndex: number, objectiveKey: string): void;
+  /** 師団長の声の変更(師団パネル) */
+  onSetAllySpeaker(speaker: number): void;
   /** 師団を委任実行 */
   onRunDelegation(dIndex: number): void;
   /** 師団を解散 */
@@ -27,6 +34,8 @@ export interface HudHandlers {
   onRunAllDelegations(): void;
   /** 委任思考の「もう打ってよい」 */
   onStopThinking(): void;
+  /** 資金ボタン: 収入表を表示 */
+  onShowIncome(): void;
   /** CPU対CPU観戦を開始(AI設計テスト用。AI完成後に削除予定) */
   onStartSpectate(): void;
   /** 観戦を停止 */
@@ -62,6 +71,8 @@ export interface Hud {
   setThinking(on: boolean): void;
   /** 観戦中表示(開始/停止ボタンの出し入れ) */
   setSpectating(on: boolean): void;
+  /** 収入表の表示/非表示を切り替える(資金ボタンの直下に出る)。表示したら true */
+  toggleIncome(html: string): boolean;
 }
 
 const el = <T extends HTMLElement>(id: string): T => {
@@ -73,6 +84,7 @@ const el = <T extends HTMLElement>(id: string): T => {
 export function createHud(handlers: HudHandlers): Hud {
   const turnLabel = el('tn');
   const goldLabel = el('gd');
+  (goldLabel as HTMLButtonElement).onclick = () => handlers.onShowIncome();
   const message = el('msg');
   const info = el('info');
   const produceBox = el('produce');
@@ -273,6 +285,25 @@ export function createHud(handlers: HudHandlers): Hud {
       // 師団パネル(上ペイン): 師団長・目標・委任実行
       const divisionsBox = el('divisions');
       divisionsBox.replaceChildren();
+      // 師団長の声: 師団長を指定する流れでここから選べる(委任の読み上げと立ち絵に使われる)
+      {
+        const row = document.createElement('div');
+        row.className = 'div-row';
+        const label = document.createElement('span');
+        label.textContent = '師団長の声: ';
+        row.append(label);
+        const voiceSel = document.createElement('select');
+        for (const sp of speakerOptions) {
+          const o = document.createElement('option');
+          o.value = String(sp.styleId);
+          o.textContent = sp.name;
+          voiceSel.append(o);
+        }
+        voiceSel.value = String(g.allySpeaker ?? g.settings.voiceSpeakerAlly);
+        voiceSel.onchange = () => handlers.onSetAllySpeaker(Number(voiceSel.value));
+        row.append(voiceSel);
+        divisionsBox.append(row);
+      }
       const delegations = g.delegations ?? [];
       if (delegations.length === 0) {
         const p = document.createElement('div');
@@ -376,6 +407,8 @@ export function createHud(handlers: HudHandlers): Hud {
       const div = document.createElement('div');
       div.textContent = line;
       aiLog.append(div);
+      // 常に最新の行が見えるよう末尾へスクロールする
+      aiLog.scrollTop = aiLog.scrollHeight;
       aiLog.scrollTop = aiLog.scrollHeight;
     },
     clearLog() {
@@ -387,6 +420,13 @@ export function createHud(handlers: HudHandlers): Hud {
     setSpectating(on) {
       btnSpectate.hidden = on;
       btnSpectateStop.hidden = !on;
+    },
+    toggleIncome(html) {
+      const box = el('income-box');
+      if (!box.hidden) { box.hidden = true; return false; }
+      box.innerHTML = html;
+      box.hidden = false;
+      return true;
     },
     openPane,
     drawMinimap(g, viewport, world) {

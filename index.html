@@ -35,7 +35,6 @@
   <aside id="pane-left" class="pane pane-left">
     <button class="pin-btn" data-pin="left" type="button" title="出しっぱなしにする">📌</button>
     <h2>情報</h2>
-    <div id="gd" class="stat"></div>
     <div id="info">ヘックスやユニットをクリックすると情報が表示されます。</div>
     <h2 class="mm-title">全体図</h2>
     <canvas id="minimap" width="440" height="200"></canvas>
@@ -55,7 +54,7 @@
         <div id="unit-table"></div>
       </div>
       <div class="top-col">
-        <h2>状況表</h2>
+        <h2 id="situation-h">状況表</h2>
         <div id="situation"></div>
       </div>
       <div class="top-col">
@@ -74,6 +73,8 @@
   <aside id="pane-right" class="pane pane-right">
     <button class="pin-btn" data-pin="right" type="button" title="出しっぱなしにする">📌</button>
     <h2>生産</h2>
+    <button id="gd" type="button" title="収入表を表示"></button>
+    <div id="income-box" hidden></div>
     <div id="produce-target">ヘックスを選択すると、生産できる場合はここから生産できます。</div>
     <div id="produce"></div>
     <p class="note">生産はマップ上で、首都とその隣接ヘックス、および首都から5ヘックス以内にある占領済み都市(towns)のヘックスを右クリックして行います(占領都市の隣接ヘックスでは生産できません)。部隊は各陣営100まで。占領できるのは歩兵のみです。</p>
@@ -104,6 +105,18 @@
 
   <!-- 右クリックメニュー -->
   <div id="ctx" hidden></div>
+
+  <!-- 敵司令官の立ち絵(VOICEVOX読み上げ中だけ左下にスライド出現する) -->
+  <div id="commander" aria-hidden="true">
+    <img id="cmd-img" src="portraits/tsumugi-normal-closed.png" alt="">
+    <div id="cmd-bubble"></div>
+  </div>
+
+  <!-- 味方師団長の立ち絵(委任の読み上げ中だけ右下にスライド出現する) -->
+  <div id="commander-ally" aria-hidden="true">
+    <div id="cmd-bubble-ally"></div>
+    <img id="cmd-img-ally" src="portraits/zunda-normal-closed.jpg" alt="">
+  </div>
   <div id="battle-popup" hidden></div>
 
   <!-- ゲーム設定画面(開始時と新規ゲーム時に表示) -->
@@ -174,7 +187,13 @@
             <option value="careless">そそっかしい</option>
           </select>
         </label>
-        <label><input id="set-voice" type="checkbox"> VOICEVOXで敵司令官が喋る</label>
+        <label><input id="set-voice" type="checkbox" checked> VOICEVOXで司令官が喋る</label>
+        <label>敵司令官の声
+          <select id="set-voice-speaker"></select>
+        </label>
+        <label>師団長(委任時)の声
+          <select id="set-voice-speaker-ally"></select>
+        </label>
         <label><input id="set-subtitles" type="checkbox" checked> 字幕ログを表示する</label>
       </fieldset>
       <button id="set-start" class="go big">ゲーム開始</button>

@@ -31,6 +31,8 @@ export interface SaveData {
   airports?: Array<{ hexId: number; owner: Side | null }>;
   /** プレイヤー側の師団指定。unit は保存時の units 配列(生存ユニットのみ)のインデックス。-1 は師団長未指定 */
   delegations?: Array<{ unit: number; objectiveKey: string }>;
+  /** 師団長の声(師団パネルで選択)。未保存なら設定画面の値を使う */
+  allySpeaker?: number;
 }
 
 export interface SaveEntry {
@@ -87,6 +89,7 @@ export function makeSaveData(g: Game): SaveData {
       const u = d.unit >= 0 ? g.units[d.unit] : undefined;
       return { unit: u && u.hp > 0 ? (indexOf.get(u) ?? -1) : -1, objectiveKey: d.objectiveKey };
     }),
+    allySpeaker: g.allySpeaker,
   };
 }
 
@@ -146,6 +149,7 @@ export function applySave(g: Game, data: SaveData): void {
     unit: d.unit >= 0 && units[d.unit] ? d.unit : -1,
     objectiveKey: d.objectiveKey,
   }));
+  g.allySpeaker = data.allySpeaker;
   g.selected = null;
   g.selectedHex = null;
   g.reach = null;

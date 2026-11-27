@@ -287,34 +287,44 @@ class BoardScene extends Phaser.Scene {
     this.cameras.main.shake(220, 0.003);
   }
 
-  /** 占領時の旗立てアニメーション(旗が上がる)。小さくて見えない問題があったため大きく長く表示する */
+  /** 占領時の旗アニメーション用 DOM 要素(3Dモデル層より手前に出すため DOM で描く) */
+  private captureFlags: Array<{ el: HTMLDivElement; at: Cube; until: number }> = [];
+
+  /** 占領時の旗立てアニメーション。Phaser 層は3Dモデル層の下になるため、DOM 層(HP数字と同じ)に出す */
   playCaptureFx(at: Cube, side: 'p' | 'e'): void {
-    const { x, y } = toPixel(at, HEX_SIZE);
-    const color = side === 'p' ? 0x2b6fd2 : 0xd23b2e;
-    const S = HEX_SIZE;
-    const fx = this.add.container(x, y).setDepth(20);
-    const gr = this.add.graphics();
-    // ポール(ヘックスの上端よりさらに上まで伸ばす)
-    gr.lineStyle(6, 0xf2f2f2, 1);
-    gr.lineBetween(0, S * 0.45, 0, -S * 1.05);
-    // 旗(大きめの三角旗+白い縁)
-    gr.fillStyle(0xffffff, 1);
-    gr.fillTriangle(0, -S * 1.08, 0, -S * 0.5, S * 0.78, -S * 0.79);
-    gr.fillStyle(color, 1);
-    gr.fillTriangle(0, -S * 1.0, 0, -S * 0.58, S * 0.66, -S * 0.79);
-    gr.fillStyle(0xffffff, 1);
-    gr.fillCircle(0, -S * 1.05, 5);
-    // 根元のリング(広がって消える)
-    gr.lineStyle(4, color, 0.9);
-    gr.strokeCircle(0, S * 0.42, S * 0.16);
-    fx.add(gr);
-    fx.setScale(1, 0);
-    fx.setAlpha(0.5);
-    this.tweens.add({
-      targets: fx, scaleY: 1, alpha: 1, duration: 550, ease: 'Back.easeOut',
-      onComplete: () => {
-        this.tweens.add({ targets: fx, alpha: 0, duration: 600, delay: 1400, onComplete: () => fx.destroy() });
-      },
+    if (!this.hpLayer) return;
+    const color = side === 'p' ? '#2b6fd2' : '#d23b2e';
+    const el = document.createElement('div');
+    el.className = 'capture-flag';
+    el.innerHTML = `<svg viewBox="-4 -40 36 47" width="100%" height="100%" aria-hidden="true">
+      <g class="flag-grow">
+        <line x1="0" y1="6" x2="0" y2="-35" stroke="#f2f2f2" stroke-width="2.6"/>
+        <polygon points="0,-35 0,-21 14,-28" fill="${color}" stroke="#ffffff" stroke-width="1.1"/>
+        <circle cx="0" cy="-35" r="2" fill="#ffffff"/>
+        <ellipse cx="0" cy="6" rx="6" ry="2.2" fill="none" stroke="${color}" stroke-width="1.6" opacity="0.9"/>
+      </g>
+    </svg>`;
+    this.hpLayer.appendChild(el);
+    this.captureFlags.push({ el, at: { ...at }, until: performance.now() + 2600 });
+  }
+
+  /** 占領旗の画面位置をカメラに追随させ、期限が来たら消す */
+  private updateCaptureFlags(): void {
+    if (this.captureFlags.length === 0) return;
+    const cam = this.cameras.main;
+    const wv = cam.worldView;
+    const now = performance.now();
+    const w = HEX_SIZE * 1.7 * cam.zoom;
+    const h = w * (47 / 40);
+    this.captureFlags = this.captureFlags.filter((f) => {
+      if (now > f.until) { f.el.remove(); return false; }
+      const p = toPixel(f.at, HEX_SIZE);
+      const sx = (p.x - wv.x) * cam.zoom;
+      const sy = (p.y - wv.y) * cam.zoom;
+      f.el.style.width = `${w.toFixed(1)}px`;
+      f.el.style.height = `${h.toFixed(1)}px`;
+      f.el.style.transform = `translate(${(sx - w * 0.12).toFixed(1)}px, ${(sy - h * 0.88).toFixed(1)}px)`;
+      return true;
     });
   }
 
@@ -488,6 +498,7 @@ class BoardScene extends Phaser.Scene {
   update(): void {
     const cam = this.cameras.main;
     this.updateHpLabels();
+    this.updateCaptureFlags();
     const speed = 14 / cam.zoom;
     if (this.cursors && this.wasd) {
       if (this.cursors.left.isDown || this.wasd.A.isDown) cam.scrollX -= speed;

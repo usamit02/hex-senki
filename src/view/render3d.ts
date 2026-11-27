@@ -125,17 +125,17 @@ export class UnitModelLayer {
       } else {
         inst.model.rotation.y += ROTATE_SPEED * dt;
       }
-      this.drawOne(r, v, inst);
-      // 搭乗中のユニットは小さく左上に重ねて表示する(複数の場合は横に並べる)
+      // 搭乗中のユニットを先に描き、輸送側をその上に重ねる(輸送側が手前に見える)
       const cargos = g.units.filter((u) => u.carriedBy === v.unit && u.hp > 0);
       cargos.forEach((cargo, i) => {
         seen.add(cargo);
         const cinst = this.instanceFor(g, { unit: cargo, x: v.x, y: v.y, size: v.size });
         if (cinst) {
           cinst.model.rotation.y = inst.model.rotation.y;
-          this.drawCargo(r, v, cinst, i);
+          this.drawCargo(r, v, cinst, i, cargos.length);
         }
       });
+      this.drawOne(r, v, inst);
     }
     r.setScissorTest(false);
     // 消えたユニットの後片付け
@@ -167,9 +167,10 @@ export class UnitModelLayer {
   }
 
   /** 搭乗中の歩兵を輸送ユニットの表示枠の左上に 1/4 サイズで描く */
-  private drawCargo(r: THREE.WebGLRenderer, v: UnitView, inst: Instance, index = 0): void {
+  private drawCargo(r: THREE.WebGLRenderer, v: UnitView, inst: Instance, index = 0, count = 1): void {
     const box = Math.max(8, v.size * VIEWPORT_FACTOR);
-    const mini = box * 0.42;
+    // 搭乗中ユニットは小さくて見にくいため、1体なら輸送側とほぼ同じ大きさ(約2倍)にする
+    const mini = box * (count > 1 ? 0.46 : 0.84);
     // 左上に寄せつつ、隣のヘックスへはみ出さないよう少し中央寄りに置く
     const x = v.x - box / 2 + box * 0.08 + index * mini * 0.92;
     const yTop = v.y - box / 2 + box * 0.08;

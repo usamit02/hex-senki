@@ -36,12 +36,28 @@ export function weaponVs(w: WeaponDef, defenderCategory: string): number {
 }
 
 /** その距離で使える武装のうち、最も有効なもの(残弾切れは使えない)。無ければ null */
-export function pickWeapon(g: Game, attacker: Unit, defender: Unit): WeaponDef | null {
-  const dist = distance(attacker, defender);
+export function pickWeapon(g: Game, attacker: Unit, defender: Unit, distOverride?: number): WeaponDef | null {
+  const dist = distOverride ?? distance(attacker, defender);
   const dCat = g.defs[defender.kind].category;
   let best: WeaponDef | null = null;
   let bestScore = -1;
   for (const w of g.defs[attacker.kind].weapons) {
+    if (dist < w.minRange || dist > w.range) continue;
+    if (g.settings.supply && w.ammo >= 0 && (attacker.ammo[w.name] ?? 0) <= 0) continue;
+    const score = w.power * weaponVs(w, dCat);
+    if (score > bestScore) { bestScore = score; best = w; }
+  }
+  return best;
+}
+
+/** 移動後に使える武装(射程2以上の武装は移動前しか撃てないため、射程1の武装のみ) */
+export function pickWeaponAfterMove(g: Game, attacker: Unit, defender: Unit, distOverride?: number): WeaponDef | null {
+  const dist = distOverride ?? distance(attacker, defender);
+  const dCat = g.defs[defender.kind].category;
+  let best: WeaponDef | null = null;
+  let bestScore = -1;
+  for (const w of g.defs[attacker.kind].weapons) {
+    if (w.range >= 2) continue;
     if (dist < w.minRange || dist > w.range) continue;
     if (g.settings.supply && w.ammo >= 0 && (attacker.ammo[w.name] ?? 0) <= 0) continue;
     const score = w.power * weaponVs(w, dCat);
@@ -55,10 +71,9 @@ export function hasLongRangeWeapon(g: Game, u: Unit): boolean {
   return g.defs[u.kind].weapons.some((w) => w.range >= 2);
 }
 
-/** その相手を攻撃できる武装があるか。射程2以上のユニットは移動前しか攻撃できない */
+/** その相手を攻撃できる武装があるか。移動後は射程1の武装でのみ攻撃できる */
 export function canAttackTarget(g: Game, a: Unit, d: Unit): boolean {
-  if (a.moved && hasLongRangeWeapon(g, a)) return false;
-  return pickWeapon(g, a, d) !== null;
+  return (a.moved ? pickWeaponAfterMove(g, a, d) : pickWeapon(g, a, d)) !== null;
 }
 
 /** HPが機数・人数を表すテーマか(現代戦・戦国)。この2テーマでは攻撃力がHPに比例して低下し、搭載可否もHPで判定する */
@@ -306,7 +321,7 @@ export function confirmUnit(g: Game, u: Unit): void {
 export function attack(g: Game, a: Unit, d: Unit): void {
   const A = g.defs[a.kind];
   const D = g.defs[d.kind];
-  const w = pickWeapon(g, a, d);
+  const w = a.moved ? pickWeaponAfterMove(g, a, d) : pickWeapon(g, a, d);
   if (!w) return;
   if (g.settings.supply && w.ammo >= 0) a.ammo[w.name] = (a.ammo[w.name] ?? w.ammo) - 1;
   const dmg = calcDamage(g, a, d, w);
@@ -367,11 +382,13 @@ export function checkGameOver(g: Game): void {
 }
 
 /** そのヘックスにその駒を生産できるか(場所・地形・資金・上限) */
-export function canProduce(g: Game, side: Side, kind: string, t: Tile): boolean {
+export function canProduce(g: Game, side: Side, kind: string, t: Tile, aiExecution = false): boolean {
   const def = g.defs[kind];
   if (!def || g.over) return false;
   if (!g.settings.production) return false;
-  if (side === 'p' && g.busy) return false;
+  // 敵ターン中(busy)にプレイヤーが手動で生産するのを防ぐガード。
+  // AI実行(観戦モードの p 側など)は対象外 — 観戦中は常時 busy のため、これに引っかかると p が一切生産できなくなる
+  if (side === 'p' && g.busy && !aiExecution) return false;
   if (g.gold[side] < def.cost) return false;
   if (liveUnits(g, side).length >= g.settings.maxUnits) return false;
   if (unitAt(g, t)) return false;
@@ -395,8 +412,8 @@ export function canProduce(g: Game, side: Side, kind: string, t: Tile): boolean 
   return true;
 }
 
-export function produce(g: Game, side: Side, kind: string, t: Tile): boolean {
-  if (!canProduce(g, side, kind, t)) return false;
+export function produce(g: Game, side: Side, kind: string, t: Tile, aiExecution = false): boolean {
+  if (!canProduce(g, side, kind, t, aiExecution)) return false;
   g.gold[side] -= g.defs[kind].cost;
   spawn(g, side, kind, t);
   g.message = `${sideName(side)}が${g.defs[kind].name}を生産しました。`;

@@ -1,5 +1,18 @@
 import { THEMES } from '../game/themes';
 import { DEFAULT_SETTINGS, type GameSettings, type ThemeId } from '../game/types';
+import { FALLBACK_SPEAKERS, fetchSpeakers } from '../audio/voicevox';
+
+function fillSpeakerSelect(sel: HTMLSelectElement, list: Array<{ name: string; styleId: number }>, current: number): void {
+  const value = sel.value || String(current);
+  sel.replaceChildren();
+  for (const sp of list) {
+    const o = document.createElement('option');
+    o.value = String(sp.styleId);
+    o.textContent = sp.name;
+    sel.append(o);
+  }
+  sel.value = [...sel.options].some((o) => o.value === value) ? value : String(current);
+}
 
 /** ゲーム設定画面を表示し、「ゲーム開始」で選ばれた設定を返す */
 export function showSettingsScreen(initial: GameSettings, onStart: (s: GameSettings) => boolean): void {
@@ -16,6 +29,8 @@ export function showSettingsScreen(initial: GameSettings, onStart: (s: GameSetti
   const aiThink = document.getElementById('set-aithink') as HTMLSelectElement;
   const aiPersonality = document.getElementById('set-aipersonality') as HTMLSelectElement;
   const voice = document.getElementById('set-voice') as HTMLInputElement;
+  const voiceSpeaker = document.getElementById('set-voice-speaker') as HTMLSelectElement;
+  const voiceSpeakerAlly = document.getElementById('set-voice-speaker-ally') as HTMLSelectElement;
   const subtitles = document.getElementById('set-subtitles') as HTMLInputElement;
   const startBtn = document.getElementById('set-start') as HTMLButtonElement;
   if (!themesBox) throw new Error('#set-themes が見つかりません');
@@ -44,6 +59,14 @@ export function showSettingsScreen(initial: GameSettings, onStart: (s: GameSetti
   aiPersonality.value = initial.aiPersonality;
   voice.checked = initial.voice;
   subtitles.checked = initial.subtitles;
+  fillSpeakerSelect(voiceSpeaker, FALLBACK_SPEAKERS, initial.voiceSpeaker);
+  fillSpeakerSelect(voiceSpeakerAlly, FALLBACK_SPEAKERS, initial.voiceSpeakerAlly);
+  // VOICEVOX が起動していれば、実際の話者一覧(全キャラクター)に差し替える
+  void fetchSpeakers().then((list) => {
+    if (!list) return;
+    fillSpeakerSelect(voiceSpeaker, list, initial.voiceSpeaker);
+    fillSpeakerSelect(voiceSpeakerAlly, list, initial.voiceSpeakerAlly);
+  });
 
   screen.hidden = false;
   startBtn.onclick = () => {
@@ -62,6 +85,8 @@ export function showSettingsScreen(initial: GameSettings, onStart: (s: GameSetti
       aiThinkMs: Number(aiThink.value) || DEFAULT_SETTINGS.aiThinkMs,
       aiPersonality: aiPersonality.value || 'balanced',
       voice: voice.checked,
+      voiceSpeaker: Number(voiceSpeaker.value) || DEFAULT_SETTINGS.voiceSpeaker,
+      voiceSpeakerAlly: Number(voiceSpeakerAlly.value) || DEFAULT_SETTINGS.voiceSpeakerAlly,
       subtitles: subtitles.checked,
     };
     // ゲーム開始に成功したときだけ設定画面を閉じる(失敗時はエラーを読めるよう残す)
