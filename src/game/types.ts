@@ -81,8 +81,8 @@ export interface GameSettings {
   incomeMul: number;
   /** 部隊上限 */
   maxUnits: number;
-  /** ZOC(敵に隣接したら移動終了)を使う */
-  zoc: boolean;
+  /** ZOC(敵に隣接したら移動終了): on=全ての敵が効く / weak=自ユニットに有効な攻撃力を持つ敵のみ効く / off=なし */
+  zoc: ZocMode;
   /** 補給(残弾の消費と回復)を使う。false なら残弾無制限 */
   supply: boolean;
   /** 補給の段階制(最難関ルール): village(人口1万人未満)は燃料のみ、town(1万人以上)は+弾薬、city(10万人以上)は+HP回復 */
@@ -95,6 +95,10 @@ export interface GameSettings {
   aiThinkMs: number;
   /** 敵司令官の性格(PERSONALITIES のキー) */
   aiPersonality: string;
+  /** 先手(p)が使う AI の版(ai/registry.ts の id)。観戦では先手AI、通常対戦では委任AIとして使う */
+  aiP: string;
+  /** 後手(e)が使う AI の版(ai/registry.ts の id)。通常対戦の CPU はこちら */
+  aiE: string;
   /** VOICEVOX の音声を使うか(ゲーム開始時に選択)。既定はON */
   voice: boolean;
   /** 敵司令官の声(VOICEVOX のスタイルID) */
@@ -105,18 +109,30 @@ export interface GameSettings {
   subtitles: boolean;
 }
 
+/** ZOCの効き方: on=全ての敵 / weak=有効な攻撃力を持つ敵のみ / off=なし */
+export type ZocMode = 'on' | 'weak' | 'off';
+
+/** 旧セーブの boolean 表記(true/false)も受け付ける */
+export function normalizeZoc(v: unknown): ZocMode {
+  if (v === 'on' || v === 'weak' || v === 'off') return v;
+  if (typeof v === 'boolean') return v ? 'on' : 'off';
+  return 'weak';
+}
+
 export const DEFAULT_SETTINGS: GameSettings = {
   theme: 'modern',
   gold: null,
   incomeMul: 1,
   maxUnits: MAX_UNITS_PER_SIDE,
-  zoc: false,
+  zoc: 'weak',
   supply: true,
   supplyTiered: false,
   production: true,
   counter: true,
   aiThinkMs: 600_000,
   aiPersonality: 'balanced',
+  aiP: 'v29',
+  aiE: 'v29',
   voice: true,
   voiceSpeaker: 8,
   voiceSpeakerAlly: 23,

@@ -158,13 +158,18 @@
       </fieldset>
       <fieldset>
         <legend>ルール</legend>
-        <label><input id="set-zoc" type="checkbox"> ZOC(敵に隣接したヘックスに入ると移動終了)</label>
+        <label>ZOC(敵に隣接したヘックスに入ると移動終了)
+          <select id="set-zoc">
+            <option value="on">あり(全ての敵)</option>
+            <option value="weak" selected>中間(有効な攻撃力を持つ敵のみ)</option>
+            <option value="off">なし</option>
+          </select>
+        </label>
         <label>補給ルール <select id="set-supply">
           <option value="off">なし(残弾・燃料は無制限)</option>
           <option value="on">あり(全ての town で燃料・弾薬・HP を補充)</option>
           <option value="tiered">段階制・最難関(village は燃料のみ／town は+弾薬／city は+HP回復)</option>
         </select></label>
-        <label><input id="set-production" type="checkbox" checked> 生産できる</label>
         <label><input id="set-counter" type="checkbox" checked> 反撃する</label>
       </fieldset>
       <fieldset>
@@ -176,6 +181,12 @@
             <option value="300000">5分</option>
             <option value="600000">10分</option>
           </select>
+        </label>
+        <label>先手のAI(観戦の先手・委任で使用)
+          <select id="set-ai-p"></select>
+        </label>
+        <label>後手のAI(通常対戦のCPU・観戦の後手)
+          <select id="set-ai-e"></select>
         </label>
         <label>敵司令官の性格
           <select id="set-aipersonality">

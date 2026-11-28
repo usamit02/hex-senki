@@ -1,6 +1,6 @@
 import type { Cube, MapData, Side, UnitDefs } from '../types';
 import type { SaveData } from '../save';
-import type { AiAction } from './planner';
+import type { AiAction } from './types';
 
 /**
  * AI Worker との通信プロトコル。
@@ -25,6 +25,10 @@ export interface AiThinkRequest {
   scopeIndices?: number[];
   /** 委任時: プレイヤーが決めた目標 */
   fixedObjective?: { at: Cube; name: string };
+  /** 逐次実行モード: 確定した行動を onAction で逐次受け取る(結果の actions は空になる) */
+  stream?: boolean;
+  /** 使う AI の版(ai/registry.ts の id)。両陣営で別々の AI を対決させられる */
+  ai?: string;
 }
 
 export interface AiThinkResult {
@@ -35,7 +39,7 @@ export interface AiThinkResult {
 /** Worker 側が Comlink で公開する API */
 export interface AiWorkerApi {
   ping(): Promise<string>;
-  think(req: AiThinkRequest, onNarration?: (line: string) => void): Promise<AiThinkResult>;
+  think(req: AiThinkRequest, onNarration?: (line: string) => void, onAction?: (a: AiAction) => void): Promise<AiThinkResult>;
   /** プレイヤー側委任の「もう打ってよい」。進行中の思考を最良プランで打ち切る */
   requestStop(): Promise<void>;
 }

@@ -26,12 +26,12 @@ export class AiWorkerPool {
     }
   }
 
-  /** 思考を依頼する。onNarration は字幕ログ・音声用の逐次コールバック */
-  async think(req: AiThinkRequest, onNarration?: (line: string) => void): Promise<AiThinkResult> {
+  /** 思考を依頼する。onNarration は字幕ログ・音声用、onAction は逐次実行モードで確定した行動を受け取る逐次コールバック */
+  async think(req: AiThinkRequest, onNarration?: (line: string) => void, onAction?: (a: import('./types').AiAction) => void): Promise<AiThinkResult> {
     this.start();
     this.active = 0;
     const worker = this.workers[this.active];
-    return worker.think(req, onNarration ? proxy(onNarration) : undefined);
+    return worker.think(req, onNarration ? proxy(onNarration) : undefined, onAction ? proxy(onAction) : undefined);
   }
 
   /** 進行中の思考(プレイヤー側委任)を最良プランで打ち切る */

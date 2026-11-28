@@ -106,15 +106,27 @@ export function damageCargoProportional(g: Game, carrier: Unit, dmg: number): vo
   }
 }
 
-/** ZOC: そのヘックスが敵ユニットに隣接しているか(航空ユニットは地上のZOCを無視する扱い) */
+/**
+ * ZOC: そのヘックスが敵ユニットに隣接しているか(航空ユニットは地上のZOCを無視する扱い)。
+ * weak モードでは、自ユニットに有効な攻撃力を持たない敵は ZOC を及ぼさない。
+ * 「有効な攻撃力」= 射程1で使えて、威力×相性倍率 が 2 以上の武器を持つこと
+ * (トラック・補給車のような無武装ユニットや、対戦車に小銃しかない歩兵は、戦車を足止めできない)
+ */
 export function inEnemyZoc(g: Game, u: Unit, at: Cube): boolean {
-  if (!g.settings.zoc) return false;
+  const mode = g.settings.zoc;
+  if (mode === 'off') return false;
   if (g.defs[u.kind].domain === 'air') return false;
   for (const n of neighbors(at)) {
     const t = tileAt(g, n);
     if (!t) continue;
     const e = unitAt(g, t);
-    if (e && e.side !== u.side && e.hp > 0) return true;
+    if (!e || e.side === u.side || e.hp <= 0) continue;
+    if (mode === 'on') return true;
+    const myCategory = g.defs[u.kind].category;
+    const hasEffectiveWeapon = g.defs[e.kind].weapons.some(
+      (w) => w.minRange <= 1 && w.range >= 1 && w.power * weaponVs(w, myCategory) >= 2,
+    );
+    if (hasEffectiveWeapon) return true;
   }
   return false;
 }

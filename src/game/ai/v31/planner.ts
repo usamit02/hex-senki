@@ -1,14 +1,14 @@
-import { distance, equals, key, neighbors } from '../hex';
+import { distance, equals, key, neighbors } from '../../hex';
 import {
   attack, boardUnit, canAttackTarget, canBoard, canProduce, cargoList, confirmUnit,
   disembarkUnit, hasLongRangeWeapon, moveCostOf, moveUnit, pickWeapon, pickWeaponAfterMove, calcDamage,
   produce, reachable,
-} from '../rules';
+} from '../../rules';
 import {
-  INCOME_POPULATION_UNIT, airportAt, capitalOf, liveUnits, producibleHexKeys, tileAt, townAt, unitAt,
-} from '../state';
-import { TERRAINS } from '../terrain';
-import type { Airport, Cube, Game, Side, Tile, Town, Unit } from '../types';
+  airportAt, capitalOf, liveUnits, producibleHexKeys, tileAt, townAt, townIncome, unitAt,
+} from '../../state';
+import { TERRAINS } from '../../terrain';
+import type { Airport, Cube, Game, Side, Tile, Town, Unit } from '../../types';
 
 /**
  * 新CPU AI(師団方式)。
@@ -16,30 +16,16 @@ import type { Airport, Cube, Game, Side, Tile, Town, Unit } from '../types';
  * - 戦術層: 順序付き行動リストを実エンジンに適用しながら1体ずつ決める(撃破で開いたマスは次のユニットの経路探索に反映される)
  * - 複数の行動順を試し、最も評価の高いプランを残す。最後に実エンジンで再検証しながら実行する
  * - 歩兵・トラックは師団と別行動の占領専門。補給車は師団に混ぜる
+ * 【v31版AI】ハイブリッド方式。後方の師団と占領部隊は試行錯誤なしで即確定して逐次実行し、
+ * 前線の師団だけ v28 方式(行動順の複数案を試して最良案を採用)で思考する。
+ * あわせて首都防衛の適正化(地上部隊が2ターン圏内に迫った場合のみ全力防衛、
+ * それ以外は敵航空戦力に比例した対空配備のみ)と、歩兵の護衛(戦闘ユニットが占領部隊に同行し、
+ * 近づく敵を積極的に攻撃する)を導入した。
  */
 
-export type AiAction =
-  | { type: 'produce'; kind: string; hex: string }
-  | { type: 'move'; unit: number; hex: string }
-  | { type: 'attack'; unit: number; target: number }
-  | { type: 'board'; unit: number; carrier: number }
-  | { type: 'disembark'; carrier: number; hex: string }
-  | { type: 'confirm'; unit: number };
+import type { AiAction, Personality, PlanOptions, PlanResult } from '../types';
+export type { AiAction, Personality, PlanOptions, PlanResult } from '../types';
 
-/** 司令官の性格。評価関数の重みとして効く(ルールは変えない) */
-export interface Personality {
-  name: string;
-  /** 攻撃性: 与ダメージ・撃破の評価を上げる */
-  aggression: number;
-  /** 防御性: 被弾リスクと地形防御の評価を上げる */
-  defense: number;
-  /** 補給意識: 修理後退と補給の評価を上げる */
-  supply: number;
-  /** リスク許容: 脅威下への前進を許す */
-  risk: number;
-  /** 修理優先度: 修理対象とするHPラインを上げる */
-  repair: number;
-}
 
 export const PERSONALITIES: Record<string, Personality> = {
   balanced: { name: 'バランス型', aggression: 1, defense: 1, supply: 1, risk: 1, repair: 1 },
@@ -51,29 +37,7 @@ export const PERSONALITIES: Record<string, Personality> = {
 };
 const DIVISION_COMMANDERS = ['balanced', 'aggressive', 'defensive', 'supply', 'tricky', 'careless'];
 
-export interface PlanOptions {
-  /** 思考時間の上限(ms)。打ち切りラインは事前に決めておき、プレイヤーは介入できない */
-  budgetMs?: number;
-  /** 総司令の性格 */
-  personality?: Personality;
-  /** プレイヤー側委任かどうか(委任は生産しない) */
-  delegated?: boolean;
-  seed?: number;
-  /** 委任時: 行動できるユニットの制限(g.units のインデックス)。師団長とその近くの未行動ユニットだけが動く */
-  scopeIndices?: number[];
-  /** 委任時: プレイヤーが決めた目標 */
-  fixedObjective?: { at: Cube; name: string };
-  /** 思考の言語化(字幕ログ・VOICEVOX 用)。作戦の節目で呼ばれる */
-  onNarration?: (line: string) => void;
-  /** プレイヤー側委任の「もう打ってよい」。true を返したら最良プランで打ち切る */
-  shouldStop?: () => boolean;
-}
 
-export interface PlanResult {
-  actions: AiAction[];
-  /** 言語化用の要約(どの街を狙い、何を撃破したか) */
-  summary: string[];
-}
 
 // ---------- 状態のスナップショット/復元(行動順の試行用) ----------
 interface Snapshot {
@@ -134,6 +98,8 @@ interface Objective {
   value: number;
   /** 防衛目標の割り当て上限(重要度から決める。defend のみ) */
   guard: number;
+  /** 対空専任の防衛目標(首都の平時配備)。対空ミサイルしか割り当てない */
+  airOnly?: boolean;
   /** 敵がこの拠点へ到達する実移動コスト(地形込み)。防衛の緊急度の判定に使う */
   enemyCost: number;
 }
@@ -155,7 +121,7 @@ const foeOf = (s: Side): Side => (s === 'p' ? 'e' : 'p');
  * 防衛の緊急度は単純なヘックス距離ではなく、この到達可能性で測る。
  * 前方に味方の拠点がある場所は、敵がそこを突破しない限り届かない=緊急度が下がる
  */
-function enemyReachMap(g: Game, side: Side): Map<string, number> {
+function enemyReachMap(g: Game, side: Side, airToo = true): Map<string, number> {
   const foe = foeOf(side);
   const out = new Map<string, number>();
   const foes = liveUnits(g, foe).filter((e) => !e.carriedBy);
@@ -184,7 +150,7 @@ function enemyReachMap(g: Game, side: Side): Map<string, number> {
       }
     }
   }
-  const airFoes = foes.filter((e) => g.defs[e.kind].domain === 'air');
+  const airFoes = airToo ? foes.filter((e) => g.defs[e.kind].domain === 'air') : [];
   if (airFoes.length > 0) {
     for (const t of g.tiles.values()) {
       if (t.terrain === 'fill') continue;
@@ -234,9 +200,29 @@ function buildObjectives(g: Game, side: Side): Objective[] {
   // 小さい拠点ほど危ない。前方に別の自軍拠点がある場所は、敵がそこを突破しない限り
   // 届かないため緊急度を割り引く(盾)。経済価値×緊急度=重要度で、守る価値と配備数を決める
   const reach = enemyReachMap(g, side);
-  const incomeOf = (t: Town): number => Math.max(1, Math.floor(t.population / INCOME_POPULATION_UNIT));
+  const groundReach = enemyReachMap(g, side, false); // 地上部隊だけの到達コスト(首都防衛の判定用)
+  const incomeOf = (t: Town): number => townIncome(t.population);
   const ownedTowns = g.towns.filter((t) => t.owner === side);
   for (const t of ownedTowns) {
+    // 首都防衛(v31): 全力防衛は「敵の地上部隊が2ターン以内に到達できる」場合だけ。
+    // それ以外は、突発的な航空来襲に備えて対空ミサイルを敵航空戦力に比例して置くだけにする
+    // (防衛隊は敵が近づいてから生産しても間に合う)
+    if (t.capital === side) {
+      const groundCost = groundReach.get(key(t.at)) ?? Infinity;
+      if (groundCost > 12) {
+        const foeAir = liveUnits(g, foe).filter((e) => !e.carriedBy && g.defs[e.kind].domain === 'air');
+        if (foeAir.length === 0) continue;
+        const nearestAir = Math.min(...foeAir.map((e) => distance(e, t.at)));
+        let sam = Math.min(3, Math.ceil(foeAir.length / 2));
+        if (nearestAir > 24) sam = Math.min(sam, 1);
+        out.push({
+          kind: 'defend', at: t.at, name: t.name, town: t, airport: null, capital: true,
+          value: incomeOf(t) + 100, guard: sam, enemyCost: reach.get(key(t.at)) ?? Infinity, airOnly: true,
+        });
+        continue;
+      }
+      // 地上部隊が迫っている場合は、このまま下の全力防衛の計算へ進む
+    }
     const radius = t.capital === side ? 14 : 8;
     const enemyCost = reach.get(key(t.at)) ?? Infinity;
     // すぐ近くの脅威か、到達コストが小さい(数ターンで届く)場合だけ防衛目標にする
@@ -329,6 +315,7 @@ function buildDivisions(g: Game, side: Side, objectives: Objective[], commander:
     const prefs = [...objectives].sort((a, b) => (distance(u, a.at) - bonus(a)) - (distance(u, b.at) - bonus(b)));
     let chosen: Objective | null = null;
     for (const o of prefs) {
+      if (o.airOnly && def.category !== 'sam') continue; // 対空専任の防衛には対空ミサイルだけ
       if (o.kind === 'defend') {
         const d = divisions.get(o);
         if (d && d.units.length >= Math.max(1, o.guard)) continue; // 重要度ぶんの配備で打ち止め
@@ -396,7 +383,7 @@ function evaluateState(g: Game, side: Side): number {
   for (const u of liveUnits(g, side)) score += g.defs[u.kind].cost * (u.hp / g.defs[u.kind].hp);
   for (const u of liveUnits(g, foe)) score -= g.defs[u.kind].cost * (u.hp / g.defs[u.kind].hp);
   // town の価値は収入(人口)に比例させる。経済価値の大きい都市の占領・防衛を優先するため
-  const townValue = (t: Town): number => 20 + Math.max(1, Math.floor(t.population / INCOME_POPULATION_UNIT));
+  const townValue = (t: Town): number => 20 + townIncome(t.population);
   for (const t of g.towns) {
     if (t.owner === side) score += townValue(t);
     else if (t.owner === foe) score -= townValue(t);
@@ -591,6 +578,20 @@ function actCombatUnit(ctx: Ctx, u: Unit, div: Division | null): void {
   const myTile = tileAt(g, u)!;
   const cands: Scored[] = [];
 
+  // 護衛(v31): 近くの占領部隊(歩兵・輸送中を含む)を護衛対象にする。
+  // 弱い歩兵が単独で突出しないよう、戦闘ユニットが同行して近づく敵を迎え撃つ
+  let escortParty: Unit | null = null;
+  let escortObj: Objective | null = null;
+  {
+    let bd = 14;
+    for (const [inf, obj] of ctx.occTargets) {
+      const p = inf.carriedBy ?? inf;
+      if (p.hp <= 0) continue;
+      const d = distance(u, p);
+      if (d < bd) { bd = d; escortParty = p; escortObj = obj; }
+    }
+  }
+
   // 航空ユニット: 燃料が心許なくなったら戦闘より帰投・補給を優先する(燃料切れ防止は最優先ルール)。
   // これが無いと、燃料不足で攻撃候補が次々に不成立になり、前線で滞空し続けて戦闘に参加できなくなる
   if (g.settings.supply && def.domain === 'air' && !isResupplyHex(g, side, u, myTile)) {
@@ -630,6 +631,8 @@ function actCombatUnit(ctx: Ctx, u: Unit, div: Division | null): void {
     score -= threatAt(g, side, dest, u.kind) * (def.cost / def.hp) * 0.22 * personality.defense / personality.risk;
     // 味方拠点に迫る敵歩兵(占領役)は陣取りにおける最大の脅威。師団目標に優先して攻撃する
     if (tDef.canCapture && myFacilityAts.some((at) => distance(target, at) <= 6)) score += 30;
+    // 護衛中の占領部隊に近づく敵は、拠点への脅威と同様に優先して攻撃する
+    if (escortParty && distance(target, escortParty) <= 6) score += 25;
     if (!fuelSafeAfter(ctx, u, dest, cost)) return -Infinity;
     return score;
   };
@@ -674,6 +677,10 @@ function actCombatUnit(ctx: Ctx, u: Unit, div: Division | null): void {
   // 占領目標の間近まで来ていて周囲に敵もいない場合、戦闘ユニットはその場で滞留せず、
   // 次の占領目標へ先行する(占領は歩兵の仕事。戦闘ユニットが小さな town の周りに張り付くのを防ぐ)
   let advanceObjective = objective;
+  // 護衛(v31): 自分の防衛目標に差し迫った脅威が無いなら、占領部隊の目標へ同行する
+  if (escortObj && advanceObjective?.kind === 'defend' && advanceObjective.enemyCost > 14) {
+    advanceObjective = escortObj;
+  }
   if (objective && objective.kind === 'capture' && distance(u, objective.at) <= 2
     && !foes.some((f) => distance(u, f) <= 4)) {
     let next: Objective | null = null;
@@ -699,6 +706,8 @@ function actCombatUnit(ctx: Ctx, u: Unit, div: Division | null): void {
       const c = costs.get(k);
       if (c === undefined) continue;
       let score = (curCost - c) * 2;
+      // 護衛中は占領部隊から離れすぎない(突出した歩兵を遠巻きに眺める状態を防ぐ)
+      if (escortParty) score += Math.max(0, 6 - distance(t, escortParty)) * 1.2;
       if (def.domain === 'ground') score += TERRAINS[t.terrain].defense * personality.defense;
       score -= threatAt(g, side, t, u.kind) * (def.cost / def.hp) * 0.22 * personality.defense / personality.risk;
       if (g.settings.supply && def.domain !== 'air' && u.fuel - cost <= 0 && !isResupplyHex(g, side, u, t)) score -= 5;
@@ -1125,40 +1134,81 @@ function runAttempt(g: Game, side: Side, opts: PlanOptions, commander: Personali
     actions: [], summary: [], rng, delegated: !!opts.delegated, occTargets: new Map(), scopeUnits, costCache: new Map(),
   };
 
-  // 生産は自ターンの最終フェーズで行う(移動・攻撃で損害が確定してから、
-  // 実際に必要になった種別を選ぶため)。行動順の組み立てと実行はその後ろに回す
+  // ===== v31 ハイブリッド方式 =====
+  // フェーズA(即確定): 占領部隊と後方の師団は試行錯誤が要らないので先に確定して流す。
+  // フェーズB(前線師団): 行動順の複数案を試し、最良案を採用してから流す(v28方式)。
+  // 生産は従来どおり最終フェーズ(損害が確定してから不足種別を選ぶ)
+  void mode;
+  let flushed = 0;
+  const flush = () => {
+    if (!opts.onAction) return;
+    for (; flushed < ctx.actions.length; flushed++) opts.onAction(ctx.actions[flushed]);
+  };
+  const stopHit = (): boolean => !!opts.stream && (!!opts.shouldStop?.() || (opts.deadlineMs !== undefined && Date.now() > opts.deadlineMs));
+  const actOne = (c: Ctx, u: Unit, div: Division | null) => {
+    if (u.hp <= 0 || u.acted || u.carriedBy) return;
+    if (g.defs[u.kind].isSupply) actSupplyUnit(c, u, div);
+    else actCombatUnit(c, u, div);
+  };
 
-  // 行動順を組み立てる
-  type Item = { u: Unit; div: Division | null } | { occupation: true };
-  const items: Item[] = [];
-  const divUnits: Array<{ u: Unit; div: Division }> = [];
-  for (const d of divisions) for (const u of d.units) divUnits.push({ u, div: d });
-  if (mode === 'priority') {
-    const longRange = divUnits.filter(({ u }) => hasLongRangeWeapon(g, u) && liveUnits(g, ctx.foe).some((f) => !f.carriedBy && canAttackTarget(g, u, f)));
-    const rest = divUnits.filter(({ u }) => !longRange.some((x) => x.u === u));
-    const supply = rest.filter(({ u }) => g.defs[u.kind].isSupply);
-    const combat = rest.filter(({ u }) => !g.defs[u.kind].isSupply);
-    items.push(...longRange, ...combat, ...supply, { occupation: true });
-  } else {
-    const foeCap = capitalOf(g, ctx.foe);
-    const sorted = [...divisions].sort((a, b) => {
-      if (a.objective.kind !== b.objective.kind) return a.objective.kind === 'defend' ? -1 : 1;
-      const da = foeCap ? distance(a.objective.at, foeCap) : 0;
-      const db = foeCap ? distance(b.objective.at, foeCap) : 0;
-      return da - db;
-    });
-    if (mode === 'division-rev') sorted.reverse();
-    for (const d of sorted) for (const u of d.units) items.push({ u, div: d });
-    items.push({ occupation: true });
+  // 前線判定: 目標の12ヘックス以内か、所属ユニットの10ヘックス以内に敵がいる師団
+  const foesNow = liveUnits(g, ctx.foe).filter((e) => !e.carriedBy);
+  const isFrontline = (d: Division): boolean =>
+    foesNow.some((f) => distance(f, d.objective.at) <= 12)
+    || d.units.some((u) => foesNow.some((f) => distance(f, u) <= 10));
+  const frontUnits: Array<{ u: Unit; div: Division }> = [];
+  const rearUnits: Array<{ u: Unit; div: Division }> = [];
+  for (const d of divisions) {
+    for (const u of d.units) (isFrontline(d) ? frontUnits : rearUnits).push({ u, div: d });
   }
 
-  for (const item of items) {
-    if (g.over) break;
-    if ('occupation' in item) { actOccupation(ctx); continue; }
-    const { u, div } = item;
-    if (u.hp <= 0 || u.acted || u.carriedBy) continue;
-    if (g.defs[u.kind].isSupply) actSupplyUnit(ctx, u, div);
-    else actCombatUnit(ctx, u, div);
+  // フェーズA: 占領部隊(護衛の判断材料になるため最初に決める)→ 後方師団
+  actOccupation(ctx);
+  flush();
+  for (const { u, div } of rearUnits) {
+    if (g.over || stopHit()) break;
+    actOne(ctx, u, div);
+    flush();
+  }
+
+  // フェーズB: 前線師団は行動順を3通り試して最良案を採用する
+  if (frontUnits.length > 0 && !g.over && !stopHit()) {
+    const longRange = frontUnits.filter(({ u }) => hasLongRangeWeapon(g, u) && foesNow.some((f) => canAttackTarget(g, u, f)));
+    const rest = frontUnits.filter(({ u }) => !longRange.some((x) => x.u === u));
+    const supplyFirst = rest.filter(({ u }) => g.defs[u.kind].isSupply);
+    const combatFirst = rest.filter(({ u }) => !g.defs[u.kind].isSupply);
+    const orderings: Array<Array<{ u: Unit; div: Division }>> = [
+      [...longRange, ...combatFirst, ...supplyFirst],
+      [...frontUnits],
+      [...frontUnits].reverse(),
+    ];
+    const snapB = snapshot(g);
+    let best: { score: number; actions: AiAction[]; summary: string[] } | null = null;
+    for (const ordering of orderings) {
+      restore(g, snapB);
+      let seedB = (opts.seed ?? 1) >>> 0;
+      const rngB = () => {
+        seedB = (seedB + 0x6d2b79f5) | 0;
+        let t = Math.imul(seedB ^ (seedB >>> 15), 1 | seedB);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+      const sub: Ctx = { ...ctx, actions: [], summary: [], rng: rngB, costCache: new Map() };
+      for (const { u, div } of ordering) {
+        if (g.over) break;
+        actOne(sub, u, div);
+      }
+      const score = evaluateState(g, side);
+      if (!best || score > best.score) best = { score, actions: sub.actions, summary: sub.summary };
+      if (g.over) break;
+    }
+    restore(g, snapB);
+    if (best) {
+      const applied = executePlan(g, side, best.actions);
+      ctx.actions.push(...applied);
+      ctx.summary.push(...best.summary);
+    }
+    flush();
   }
 
   // 最終フェーズ: 生産。戦闘結果(損害・撃破)が確定した盤面で、不足種別を選び直す
@@ -1167,6 +1217,7 @@ function runAttempt(g: Game, side: Side, opts: PlanOptions, commander: Personali
     const freshDivisions = buildDivisions(g, side, freshObjectives, commander, g.turn, scopeUnits ?? undefined);
     planProduction(ctx, freshDivisions);
   }
+  flush();
   return { actions: ctx.actions, summary: ctx.summary };
 }
 
@@ -1260,21 +1311,21 @@ export function playTurn(g: Game, side: Side, opts: PlanOptions = {}): PlanResul
       narrate(`第${i + 1}師団、${d.objective.name}方面。${d.units.length}部隊。`);
     });
   }
-  const modes: OrderMode[] = ['priority', 'division', 'division-rev'];
-  let best: { score: number; actions: AiAction[]; summary: string[] } | null = null;
-  for (const mode of modes) {
-    if (best && (Date.now() - t0 > budgetMs || opts.shouldStop?.())) break;
-    restore(g, snap);
-    const res = runAttempt(g, side, opts, commander, mode);
-    const score = evaluateState(g, side);
-    if (!best || score > best.score) best = { score, actions: res.actions, summary: res.summary };
-    if (g.over) break;
-  }
+  // v31: ハイブリッド方式の試行は1回だけ(runAttempt 内でフェーズ分けしている)。
+  // 逐次実行時は runAttempt が確定した行動をそのまま流すため、ここでは再検証しない
+  const res = runAttempt(g, side, { ...opts, deadlineMs: t0 + budgetMs }, commander, 'priority');
   restore(g, snap);
-  const applied = executePlan(g, side, best?.actions ?? []);
-  if (opts.onNarration && best) {
-    const lines = [...new Set(best.summary)].slice(0, 5);
+  if (opts.stream && opts.onAction) {
+    if (opts.onNarration) {
+      const lines = [...new Set(res.summary)].slice(0, 5);
+      for (const line of lines) opts.onNarration(`${line}。`);
+    }
+    return { actions: [], summary: res.summary };
+  }
+  const applied = executePlan(g, side, res.actions);
+  if (opts.onNarration) {
+    const lines = [...new Set(res.summary)].slice(0, 5);
     for (const line of lines) opts.onNarration(`${line}。`);
   }
-  return { actions: applied, summary: best?.summary ?? [] };
+  return { actions: applied, summary: res.summary };
 }

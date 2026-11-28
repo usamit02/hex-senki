@@ -1,6 +1,6 @@
 import { distance, key } from '../game/hex';
 import { attack, boardUnit, canBoard, cargoList, cargoOf, confirmUnit, disembarkUnit, inRange, moveCostOf, moveUnit, reachable, resupplyFromAdjacentSupply, undoMove } from '../game/rules';
-import { INCOME_POPULATION_UNIT, income, linesAt, producibleHexKeys, tileAt, townAt, unitAt } from '../game/state';
+import { income, linesAt, producibleHexKeys, tileAt, townAt, townIncome, unitAt } from '../game/state';
 import { TERRAINS } from '../game/terrain';
 import { getTheme } from '../game/themes';
 import type { Cube, Game, Tile, Unit } from '../game/types';
@@ -132,7 +132,7 @@ export function describeHex(g: Game, t: Tile): string {
   if (town) {
     lines.push(`<strong>🏙 ${esc(town.name)}${town.capital ? '(首都)' : ''}</strong>`);
     lines.push(`人口: ${town.population.toLocaleString('ja-JP')}人 / 占領: ${ownerName(town.owner)}`);
-    lines.push(`収入: +${Math.max(1, Math.floor(town.population / INCOME_POPULATION_UNIT))}/ターン(占領時)`);
+    lines.push(`収入: +${townIncome(town.population)}/ターン(占領時)`);
     lines.push('占領できるのは占領可能なユニットのみ');
   }
   const u = unitAt(g, t);
@@ -161,7 +161,7 @@ export function describeIncome(g: Game): string {
   const rows = g.towns
     .filter((t) => t.owner === 'p')
     .sort((a, b) => b.population - a.population)
-    .map((t) => `<tr><td>${esc(t.name)}${t.capital ? '(首都)' : ''}</td><td class="num">${t.population.toLocaleString('ja-JP')}</td><td class="num">+${Math.max(1, Math.floor(t.population / INCOME_POPULATION_UNIT))}</td></tr>`);
+    .map((t) => `<tr><td>${esc(t.name)}${t.capital ? '(首都)' : ''}</td><td class="num">${t.population.toLocaleString('ja-JP')}</td><td class="num">+${townIncome(t.population)}</td></tr>`);
   if (rows.length === 0) return '<b>収入表</b><br>占領済みの市町村がありません。';
   return `<b>収入表(占領済み市町村)</b><table class="income-table"><tr><th>市町村</th><th>人口</th><th>収入</th></tr>${rows.join('')}<tr><th>合計</th><th></th><th class="num">+${income(g, 'p')}</th></tr></table>`;
 }

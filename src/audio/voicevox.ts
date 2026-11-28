@@ -104,7 +104,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, ms: number): Pro
  * 合成まで試すのは、初回は話者モデルの読み込みで時間がかかる問題を
  * ゲーム開始時点で切り分けるため(合成結果は再生せず捨てる)
  */
-export async function checkVoicevox(speaker: number = FALLBACK_SPEAKER): Promise<string | null> {
+export async function checkVoicevox(speaker: number = FALLBACK_SPEAKER, allySpeaker?: number): Promise<string | null> {
   let ver: Response;
   try {
     ver = await fetchWithTimeout(`${BASE}/version`, { method: 'GET' }, 3000);
@@ -135,6 +135,28 @@ export async function checkVoicevox(speaker: number = FALLBACK_SPEAKER): Promise
     return '音声合成に失敗しました(タイムアウトまたは通信エラー)';
   }
   if (!res.ok) return `音声合成で HTTP ${res.status} が返りました`;
+  // 味方側の話者も先に1回合成しておく(話者モデルの読み込みは初回が重く、
+  // 師団長の最初のセリフが移動フェイズまで遅れる原因になるため)
+  if (allySpeaker !== undefined && allySpeaker !== speaker) {
+    void (async () => {
+      try {
+        const aq = await fetchWithTimeout(
+          `${BASE}/audio_query?text=${encodeURIComponent('接続テスト')}&speaker=${allySpeaker}`,
+          { method: 'POST' },
+          5000,
+        );
+        if (!aq.ok) return;
+        const qy: unknown = await aq.json();
+        await fetchWithTimeout(`${BASE}/synthesis?speaker=${allySpeaker}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(qy),
+        }, 60000);
+      } catch {
+        // ウォームアップの失敗は無視する(本編の合成で改めてエラーになる)
+      }
+    })();
+  }
   return null;
 }
 
@@ -173,7 +195,7 @@ async function synthesize(text: string, speaker: number): Promise<Blob> {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(query),
-    }, 30000);
+    }, 60000); // 初回の話者モデル読み込みなどで時間がかかることがあるため長めに取る
   } catch {
     throw new Error('VOICEVOXでの音声合成に失敗しました。音声は出ません(字幕ログは動作します)。');
   }
@@ -208,8 +230,8 @@ function ensureSynthesis(): void {
     const p = synthesize(item.text, item.speaker);
     p.catch(() => undefined); // 実際のエラー処理は pump 側で行う(未処理拒否の警告回避)
     item.blob = p.then(
-      (b) => { synthInFlight--; ensureSynthesis(); return b; },
-      (e: unknown) => { synthInFlight--; ensureSynthesis(); throw e; },
+      (b) => { synthInFlight--; markProgress(); ensureSynthesis(); return b; },
+      (e: unknown) => { synthInFlight--; markProgress(); ensureSynthesis(); throw e; },
     );
   }
 }
@@ -292,6 +314,7 @@ async function pump(): Promise<void> {
       if (item.dropped) continue; // 待ちの間に優先度の高い行へ差し替えられた
       errorReported = false; // 合成が成功したら、次回の失敗は再び知らせる
       playingItem = item;
+      markProgress();
       speechListener?.onLineStart(item.text, item.channel);
       try {
         await playBlob(blob);
@@ -299,6 +322,7 @@ async function pump(): Promise<void> {
         reportError('VOICEVOXの音声再生で問題が発生しました。音声は出ません(字幕ログは動作します)。');
       }
       playingItem = null;
+      markProgress();
       speechListener?.onLineEnd(item.text, item.channel);
     }
   } finally {
@@ -309,6 +333,8 @@ async function pump(): Promise<void> {
 
 /** 読み上げキューに追加する。合成は同時2件まで順番に開始し、再生と並行して進む */
 export function speak(text: string, speaker: number = FALLBACK_SPEAKER, channel: SpeechChannel = 'enemy', tag?: string): void {
+  startWatchdog();
+  markProgress();
   queue.push({ text, speaker, channel, tag });
   ensureSynthesis();
   // 溜まりすぎた場合の間引き: まず状況読み上げ(tagつき)から、それでも多ければ古い待ち行から。
@@ -342,6 +368,40 @@ export function clearWaiting(): void {
     queue[i].dropped = true;
     queue.splice(i, 1);
   }
+}
+
+/**
+ * ターン開始時のキュー初期化: 前ターンの待ち行列を消し、再生中の行も打ち切る。
+ * これをしないと、前ターンの長い読み上げが終わるまで状況読み上げが始まらない
+ */
+export function beginTurnQueue(): void {
+  clearWaiting();
+  playInterrupt?.();
+}
+
+// ---------- 無音の監視(詰まり検知) ----------
+// 合成リクエストが返ってこない等でキューが止まると、その後ずっと無音になる。
+// 定期的に「待ち行列があるのに再生も合成も進んでいない」状態を検知し、
+// 先頭の行を切り捨てて再開する(セリフのキューを差し込み直す)
+let lastProgressAt = Date.now();
+let watchdogStarted = false;
+function markProgress(): void {
+  lastProgressAt = Date.now();
+}
+function startWatchdog(): void {
+  if (watchdogStarted) return;
+  watchdogStarted = true;
+  setInterval(() => {
+    if (queue.length === 0 || playingItem) return;
+    if (Date.now() - lastProgressAt < 15000) return;
+    // 詰まっている先頭の行を切り捨てて、合成と再生を再開する
+    const stuck = queue[0];
+    stuck.dropped = true;
+    queue.splice(0, 1);
+    markProgress();
+    ensureSynthesis();
+    void pump();
+  }, 4000);
 }
 
 /** キューと再生を止める */

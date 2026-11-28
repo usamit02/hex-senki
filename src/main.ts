@@ -1,5 +1,6 @@
 import './style.css';
-import { executePlan, type AiAction } from './game/ai/planner';
+import { executePlan } from './game/ai/v29/planner';
+import type { AiAction } from './game/ai/types';
 import { AiWorkerPool } from './game/ai/pool';
 import type { AiThinkRequest } from './game/ai/protocol';
 import { loadMap, loadThemeUnitDefs } from './game/data';
@@ -12,7 +13,7 @@ import { canProduce, produce, reachable, resupplyFromAdjacentSupply, settleCaptu
 import { airportAt, createGame, tileAt, townAt, unitAt } from './game/state';
 import { showSettingsScreen } from './ui/settings';
 import { playAttackSfx, playCaptureSfx, playExplosionSfx, playMoveSfx, playTurnSfx } from './audio/sfx';
-import { checkVoicevox, clearWaiting, dropQueued, setSpeechListener, setVoiceErrorHandler, speak, stopSpeaking, unlockAudio, type SpeechChannel } from './audio/voicevox';
+import { beginTurnQueue, checkVoicevox, setSpeechListener, setVoiceErrorHandler, speak, stopSpeaking, unlockAudio, type SpeechChannel } from './audio/voicevox';
 import { getTheme } from './game/themes';
 import { validateUnitDefs } from './game/validate';
 import { DEFAULT_SETTINGS, type GameSettings } from './game/types';
@@ -130,7 +131,7 @@ function startGame(settings: GameSettings): boolean {
     unlockAudio();
     setVoiceErrorHandler((msg) => hud.showError(msg));
     const started = game;
-    void checkVoicevox(settings.voiceSpeaker).then((reason) => {
+    void checkVoicevox(settings.voiceSpeaker, settings.voiceSpeakerAlly).then((reason) => {
       if (reason && game === started) {
         hud.showError(`VOICEVOXを使用できません: ${reason}。音声は出ません(字幕ログは動作します)。`);
       }
@@ -163,7 +164,8 @@ function startFromSave(data: SaveData): boolean {
 }
 
 function newGame(): void {
-  showSettingsScreen(lastSettings, startGame);
+  // ゲーム進行中なら、設定カードの外側クリックでキャンセルして元のゲームへ戻れる
+  showSettingsScreen(lastSettings, startGame, () => game !== null);
 }
 
 /** AIの言語化: 字幕ログ(設定でONのとき)と VOICEVOX 音声(設定でONのとき)へ流す */
@@ -177,11 +179,11 @@ function narrate(g: Game, line: string, channel: SpeechChannel = 'enemy', tag?: 
   }
 }
 
-/** CPUターン開始時の状況読み上げ(状況表の内容を1行で。思考の待ち時間を持たせる)。
- * tag='situation' を付け、戦略目標の行が来たら待ち行列から譲らせる(優先して喋らせる) */
+/** CPUターン開始時の状況読み上げ(状況表の内容を1行で。思考の待ち時間を持たせる) */
 function narrateSituation(g: Game, channel: SpeechChannel = 'enemy'): void {
-  // 前のターンの読み上げ残りを消し、状況読み上げがターン開始直後に始まるようにする
-  clearWaiting();
+  // 前のターンの読み上げ残りを消し、再生中の行も打ち切って、
+  // 状況読み上げがターン開始直後に始まるようにする
+  beginTurnQueue();
   const pT = g.towns.filter((t) => t.owner === 'p').length;
   const eT = g.towns.filter((t) => t.owner === 'e').length;
   const pU = g.units.filter((u) => u.side === 'p' && u.hp > 0).length;
@@ -311,50 +313,111 @@ function setupCommander(): void {
  * 現在の盤面をセーブ形式で Worker へ送り、行動リストを受け取る。
  * 行動リストのユニット番号はセーブ形式(生存ユニットのみ)の番号なので、実ゲームの番号へ変換して返す
  */
-async function requestPlan(g: Game, partial: Omit<AiThinkRequest, 'save' | 'defs' | 'map'>, channel: SpeechChannel = 'enemy'): Promise<AiAction[]> {
+interface ExecSpec {
+  side: 'p' | 'e';
+  /** カメラが行動ユニットを追う(敵ターン・観戦) */
+  follow?: boolean;
+  /** true になったら実行も思考も打ち切る(観戦の停止) */
+  cancelled?: () => boolean;
+}
+
+/**
+ * AIに思考を依頼し、確定した行動から逐次実行する。
+ * 計画が全て固まるまで盤面が止まっていた方式をやめ、ユニット単位で
+ * 「決まった手から動く」ようにした(読み上げと盤面の動きが合う)。
+ * 思考(Worker)と実行(メイン)は並行して進み、両方終わったら戻る
+ */
+async function requestPlan(g: Game, partial: Omit<AiThinkRequest, 'save' | 'defs' | 'map'>, channel: SpeechChannel = 'enemy', exec?: ExecSpec): Promise<void> {
   const save = makeSaveData(g);
   const alive = g.units.filter((u) => u.hp > 0);
   const toLive = (i: number): number => (alive[i] ? g.units.indexOf(alive[i]) : -1);
-  const res = await aiPool.think(
-    { save, defs: g.defs, map: mapData, ...partial },
-    (line) => {
-      // 戦略目標などの本命の行が来たら、まだ喋っていない状況読み上げは譲らせる
-      dropQueued('situation');
-      narrate(g, line, channel);
-    },
-  );
-  const out: AiAction[] = [];
-  for (const a of res.actions) {
+  /** セーブ形式のユニット番号を、実ゲームの番号へ変換する。変換できない手は null */
+  const translate = (a: AiAction): AiAction | null => {
     switch (a.type) {
       case 'produce':
-        out.push(a);
-        break;
+        return a;
       case 'move':
       case 'confirm': {
         const u = toLive(a.unit);
-        if (u >= 0) out.push({ ...a, unit: u });
-        break;
+        return u >= 0 ? { ...a, unit: u } : null;
       }
       case 'attack': {
         const u = toLive(a.unit);
         const t = toLive(a.target);
-        if (u >= 0 && t >= 0) out.push({ ...a, unit: u, target: t });
-        break;
+        return u >= 0 && t >= 0 ? { ...a, unit: u, target: t } : null;
       }
       case 'board': {
         const u = toLive(a.unit);
         const c = toLive(a.carrier);
-        if (u >= 0 && c >= 0) out.push({ ...a, unit: u, carrier: c });
-        break;
+        return u >= 0 && c >= 0 ? { ...a, unit: u, carrier: c } : null;
       }
       case 'disembark': {
         const c = toLive(a.carrier);
-        if (c >= 0) out.push({ ...a, carrier: c });
-        break;
+        return c >= 0 ? { ...a, carrier: c } : null;
       }
     }
+  };
+
+  const queue: AiAction[] = [];
+  let streamDone = false;
+  let streamError: unknown = null;
+  let wake: (() => void) | null = null;
+  const notify = () => { const w = wake; wake = null; w?.(); };
+  const enqueue = (a: AiAction) => {
+    const t = translate(a);
+    if (t) { queue.push(t); notify(); }
+  };
+
+  // 実行ループ: 届いた行動から1手ずつ、実エンジンで再検証しながら実行する
+  let stopSent = false;
+  const execLoop = (async () => {
+    for (;;) {
+      if (exec?.cancelled?.() && !stopSent) {
+        stopSent = true;
+        queue.length = 0;
+        void aiPool.requestStop().catch(() => { /* 思考側の停止はベストエフォート */ });
+      }
+      while (queue.length > 0 && !g.over && !exec?.cancelled?.()) {
+        const a = queue.shift()!;
+        if (exec && (exec.side === 'e' || exec.follow)) {
+          const subject: Tile | Unit | undefined = a.type === 'produce'
+            ? g.tiles.get(a.hex)
+            : g.units[a.type === 'disembark' ? a.carrier : a.unit];
+          if (subject && !renderer.isVisible(subject)) {
+            renderer.centerOnTile(subject);
+            await sleep(120);
+          }
+        }
+        executePlan(g, exec?.side ?? partial.side, [a]);
+        refresh();
+        await sleep(ENEMY_STEP_DELAY_MS);
+      }
+      if (streamDone) break;
+      await new Promise<void>((r) => { wake = r; setTimeout(r, 250); });
+    }
+  })();
+
+  try {
+    const res = await aiPool.think(
+      { save, defs: g.defs, map: mapData, ...partial, stream: true },
+      (line) => {
+        // 状況読み上げ→戦略目標の順でそのまま喋る。以前はここで状況読み上げを
+        // 待ち行列から外していたが、前ターンの残りの後ろに並んだ状況行まで消えてしまい、
+        // 「状況表がキャンセルされる」原因になっていたため廃止した
+        narrate(g, line, channel);
+      },
+      enqueue,
+    );
+    // 逐次実行でなかった場合(念のための互換): 残りの行動をキューへ入れる
+    for (const a of res.actions) enqueue(a);
+  } catch (e) {
+    streamError = e;
+  } finally {
+    streamDone = true;
+    notify();
   }
-  return out;
+  await execLoop;
+  if (streamError) throw streamError;
 }
 
 /** 指定陣営の首都を画面中央に表示する(拡大縮小は変えない) */
@@ -364,26 +427,6 @@ function centerOnCapital(side: 'p' | 'e'): void {
   if (t) {
     renderer.centerOnTile(t);
     refresh(); // ミニマップの表示範囲も追随させる
-  }
-}
-
-/** 行動リストを1手ずつ、実エンジンで再検証しながら実行し、盤面を見せながら進める */
-async function executeActionsAnimated(g: Game, side: 'p' | 'e', actions: AiAction[], follow = false, cancelled?: () => boolean): Promise<void> {
-  for (const a of actions) {
-    if (g.over || cancelled?.()) break;
-    // 敵のターン(と観戦時): 行動するユニット(または生産ヘックス)が画面外なら、その位置を中央に表示する
-    if (side === 'e' || follow) {
-      const subject: Tile | Unit | undefined = a.type === 'produce'
-        ? g.tiles.get(a.hex)
-        : g.units[a.type === 'disembark' ? a.carrier : a.unit];
-      if (subject && !renderer.isVisible(subject)) {
-        renderer.centerOnTile(subject);
-        await sleep(120);
-      }
-    }
-    executePlan(g, side, [a]);
-    refresh();
-    await sleep(ENEMY_STEP_DELAY_MS);
   }
 }
 
@@ -408,12 +451,12 @@ function endTurn(): void {
 
   void (async () => {
     try {
-      const actions = await requestPlan(g, {
+      await requestPlan(g, {
         side: 'e',
         budgetMs: g.settings.aiThinkMs,
         personality: g.settings.aiPersonality,
-      });
-      await executeActionsAnimated(g, 'e', actions);
+        ai: g.settings.aiE ?? 'v29',
+      }, 'enemy', { side: 'e' });
     } catch (e) {
       // Worker が使えない環境ではゲームとして成立しないため、エラーで停止する
       const detail = e instanceof Error ? e.message : String(e);
@@ -466,8 +509,7 @@ async function runSpectateLoop(): Promise<void> {
       refresh();
       // 観戦でも先手側は「プレイヤー側師団長」として、味方側の声・右下の立ち絵で喋る
       narrateSituation(g, 'ally');
-      const pa = await requestPlan(g, { side: 'p', budgetMs, personality: g.settings.aiPersonality }, 'ally');
-      await executeActionsAnimated(g, 'p', pa, true, () => !spectating);
+      await requestPlan(g, { side: 'p', budgetMs, personality: g.settings.aiPersonality, ai: g.settings.aiP ?? 'v29' }, 'ally', { side: 'p', follow: true, cancelled: () => !spectating });
       if (g.over || !spectating) break;
       settleCaptures(g, 'p');
       for (const u of g.units) if (u.side === 'p') { u.moved = true; u.acted = true; }
@@ -479,8 +521,7 @@ async function runSpectateLoop(): Promise<void> {
       g.message = `観戦中: 後手の第${g.turn}ターン(上限${turnCap}ターン)…`;
       refresh();
       narrateSituation(g);
-      const ea = await requestPlan(g, { side: 'e', budgetMs, personality: g.settings.aiPersonality });
-      await executeActionsAnimated(g, 'e', ea, true, () => !spectating);
+      await requestPlan(g, { side: 'e', budgetMs, personality: g.settings.aiPersonality, ai: g.settings.aiE ?? 'v29' }, 'enemy', { side: 'e', follow: true, cancelled: () => !spectating });
       finishEnemyTurn(g);
       centerOnCapital('p'); // プレイヤーのターンになった時点で即座に自首都へ移動する
       refresh();
@@ -607,15 +648,15 @@ async function runDelegation(di: number): Promise<boolean> {
   g.message = `師団${di + 1}が行動中…`;
   refresh();
   try {
-    const actions = await requestPlan(g, {
+    await requestPlan(g, {
       side: 'p',
       budgetMs: DELEGATION_BUDGET_MS,
       personality: 'balanced',
+      ai: g.settings.aiP ?? 'v29',
       delegated: true,
       scopeIndices,
       fixedObjective: { at: { x: objTile.x, y: objTile.y, z: objTile.z }, name: objectiveName(g, objTile) },
-    }, 'ally');
-    await executeActionsAnimated(g, 'p', actions);
+    }, 'ally', { side: 'p' });
     settleCaptures(g, 'p');
     g.message = `師団${di + 1}の委任行動が終わりました。`;
   } catch {

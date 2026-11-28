@@ -5,6 +5,7 @@ import {
   MAX_MAP_ROWS,
   MAX_UNITS_PER_SIDE,
   DEFAULT_SETTINGS,
+  normalizeZoc,
   type Cube,
   type Game,
   type Airport,
@@ -19,8 +20,15 @@ import {
   type UnitDefs,
 } from './types';
 
-/** 収入: 占領済み towns(首都含む)の人口 INCOME_POPULATION_UNIT 人につき 1 gold(最低1/都市) */
-export const INCOME_POPULATION_UNIT = 1000;
+/**
+ * town 1件の収入: 人口の平方根に比例させて格差を平準化する。
+ * 収入 = 3 × √(人口/100) を四捨五入し、9〜90 に収める(格差は最大で10倍)。
+ * 人口と収入の対応: 1,000人→9 / 10,000人→30 / 100,000人→90。
+ * 旧方式(人口1,000人につき1)では最大289倍の格差があった
+ */
+export function townIncome(population: number): number {
+  return Math.min(90, Math.max(9, 3 * Math.round(Math.sqrt(population / 100))));
+}
 /** 生産対象になる占領 towns の範囲: 首都からこの距離(ヘックス数)以内にある towns */
 export const PRODUCE_TOWN_RADIUS = 5;
 
@@ -51,10 +59,7 @@ export const ownedTowns = (g: Game, side: Side): Town[] => g.towns.filter((t) =>
 export function income(g: Game, side: Side): number {
   let base: number;
   if (g.towns.length > 0) {
-    base = ownedTowns(g, side).reduce(
-      (sum, t) => sum + Math.max(1, Math.floor(t.population / INCOME_POPULATION_UNIT)),
-      0,
-    );
+    base = ownedTowns(g, side).reduce((sum, t) => sum + townIncome(t.population), 0);
   } else {
     base = BASE_INCOME + CITY_INCOME * citiesOf(g, side).length;
   }
@@ -171,6 +176,7 @@ function resolveLines(kind: LineFeature['kind'], lines: LineData[], tilesById: M
 
 /** units.json と map.json / hex.json から、新しいゲームを作る */
 export function createGame(defs: UnitDefs, map: MapData, settings: GameSettings = DEFAULT_SETTINGS): Game {
+  settings = { ...settings, zoc: normalizeZoc(settings.zoc) }; // 旧セーブの boolean 表記を変換する
   if (!Array.isArray(map.hexes) || map.hexes.length === 0) throw new Error('hex.json: hexes が空です');
   // マップサイズは 128x128 に固定(AI演算の最適化のため)。データが不足する場合はエラーで終了する
   {
