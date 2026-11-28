@@ -13,7 +13,7 @@ import { canProduce, produce, reachable, resupplyFromAdjacentSupply, settleCaptu
 import { airportAt, createGame, tileAt, townAt, unitAt } from './game/state';
 import { showSettingsScreen } from './ui/settings';
 import { playAttackSfx, playCaptureSfx, playExplosionSfx, playMoveSfx, playTurnSfx } from './audio/sfx';
-import { beginTurnQueue, checkVoicevox, setSpeechListener, setVoiceErrorHandler, speak, stopSpeaking, unlockAudio, type SpeechChannel } from './audio/voicevox';
+import { checkVoicevox, dropQueuedPrio, setSpeechListener, setVoiceErrorHandler, speak, stopSpeaking, unlockAudio, type SpeechChannel, type SpeechPriority } from './audio/voicevox';
 import { getTheme } from './game/themes';
 import { validateUnitDefs } from './game/validate';
 import { DEFAULT_SETTINGS, type GameSettings } from './game/types';
@@ -168,22 +168,61 @@ function newGame(): void {
   showSettingsScreen(lastSettings, startGame, () => game !== null);
 }
 
+// ---------- 読み上げの間引き ----------
+// 序盤(部隊が少ない)はCPUの思考が一瞬で終わるため、作戦目標以外のセリフは
+// 合成が終わる前にターンが替わってしまう。思考時間が短いと予想されるターンは
+// 優先度の高いセリフだけを音声に回し、中盤以降(思考が長い)は種類を増やす。
+// 字幕ログは常時すべて出す(間引くのは音声だけ)
+type SpeechCaps = Record<SpeechPriority, number>;
+let speechUsed: SpeechCaps = { objective: 0, combat: 0, production: 0, situation: 0 };
+let lastThinkMs = 0;
+
+/** プランナーの言語化を優先度に振り分ける(作戦目標 > 戦闘結果 > 生産 > 状況) */
+function classifyLine(line: string): SpeechPriority {
+  if (line.includes('生産')) return 'production';
+  if (/占領|撃破|攻撃|撃墜|損傷|撃沈|制圧|確保/.test(line)) return 'combat';
+  return 'objective';
+}
+
 /** AIの言語化: 字幕ログ(設定でONのとき)と VOICEVOX 音声(設定でONのとき)へ流す */
-function narrate(g: Game, line: string, channel: SpeechChannel = 'enemy', tag?: string): void {
+function narrate(g: Game, line: string, channel: SpeechChannel = 'enemy', prio?: SpeechPriority): void {
   if (g.settings.subtitles) hud.appendLog(line);
-  if (g.settings.voice) {
-    const speaker = channel === 'ally'
-      ? allyStyleSpeaker(g.allySpeaker ?? g.settings.voiceSpeakerAlly, line)
-      : g.settings.voiceSpeaker;
-    speak(line, speaker, channel, tag);
+  if (!g.settings.voice) return;
+  const p = prio ?? classifyLine(line);
+  const side = channel === 'ally' ? 'p' : 'e';
+  const caps = currentCaps(g, side);
+  if (speechUsed[p] >= caps[p]) return; // このターンの音声枠を使い切った(字幕には出ている)
+  speechUsed[p]++;
+  const speaker = channel === 'ally'
+    ? allyStyleSpeaker(g.allySpeaker ?? g.settings.voiceSpeakerAlly, line)
+    : g.settings.voiceSpeaker;
+  speak(line, speaker, channel, p);
+}
+
+let capsCache: { key: string; caps: SpeechCaps } = { key: '', caps: { objective: 0, combat: 0, production: 0, situation: 0 } };
+function currentCaps(g: Game, side: 'p' | 'e'): SpeechCaps {
+  const keyName = `${g.turn}:${side}`;
+  if (capsCache.key !== keyName) {
+    const totalUnits = g.units.filter((u) => u.hp > 0).length;
+    let caps: SpeechCaps;
+    if (g.turn <= 2 || totalUnits < 16 || (lastThinkMs > 0 && lastThinkMs < 8000)) {
+      caps = { objective: 2, combat: 0, production: 0, situation: 0 };
+    } else if (totalUnits >= 36 || lastThinkMs >= 30000) {
+      caps = { objective: 6, combat: 6, production: 3, situation: 1 };
+    } else {
+      caps = { objective: 5, combat: 3, production: 2, situation: 1 };
+    }
+    capsCache = { key: keyName, caps };
+    speechUsed = { objective: 0, combat: 0, production: 0, situation: 0 };
   }
+  return capsCache.caps;
 }
 
 /** CPUターン開始時の状況読み上げ(状況表の内容を1行で。思考の待ち時間を持たせる) */
 function narrateSituation(g: Game, channel: SpeechChannel = 'enemy'): void {
-  // 前のターンの読み上げ残りを消し、再生中の行も打ち切って、
-  // 状況読み上げがターン開始直後に始まるようにする
-  beginTurnQueue();
+  // 前のターンの読み上げは打ち切らない(プレイヤーターンに食い込んで喋ってよい)。
+  // 古い状況行だけを外し、新しい状況行が優先度(最下位)の順番で流れるようにする
+  dropQueuedPrio('situation');
   const pT = g.towns.filter((t) => t.owner === 'p').length;
   const eT = g.towns.filter((t) => t.owner === 'e').length;
   const pU = g.units.filter((u) => u.side === 'p' && u.hp > 0).length;
@@ -397,6 +436,7 @@ async function requestPlan(g: Game, partial: Omit<AiThinkRequest, 'save' | 'defs
     }
   })();
 
+  const thinkT0 = Date.now();
   try {
     const res = await aiPool.think(
       { save, defs: g.defs, map: mapData, ...partial, stream: true },
@@ -417,6 +457,7 @@ async function requestPlan(g: Game, partial: Omit<AiThinkRequest, 'save' | 'defs
     notify();
   }
   await execLoop;
+  lastThinkMs = Date.now() - thinkT0; // 次ターンの読み上げ量の判断に使う
   if (streamError) throw streamError;
 }
 

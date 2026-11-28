@@ -203,17 +203,27 @@ async function synthesize(text: string, speaker: number): Promise<Blob> {
   return res.blob();
 }
 
+/**
+ * 読み上げの優先順位(本人の指定): 作戦目標 > 戦闘結果 > 生産 > 状況表読み上げ。
+ * 待ち行列はこの順で再生され、溜まりすぎた場合は下位から間引かれる
+ */
+export type SpeechPriority = 'objective' | 'combat' | 'production' | 'situation';
+const PRIO_NUM: Record<SpeechPriority, number> = { objective: 0, combat: 1, production: 2, situation: 3 };
+
 interface SpeechItem {
   text: string;
   speaker: number;
   channel: SpeechChannel;
+  /** 優先度(小さいほど先に喋る) */
+  prio: number;
+  /** 投入順(同優先度では先に入ったものから喋る。分割した行の順序保持にも使う) */
+  seq: number;
   /** 合成結果。合成の開始は ensureSynthesis が順番に制御する */
   blob?: Promise<Blob>;
-  /** 用途タグ(状況読み上げは 'situation')。戦略目標などの本命の行が来たら待ち行列から外せる */
-  tag?: string;
   /** 待ち行列から外された行は再生しない */
   dropped?: boolean;
 }
+let nextSeq = 0;
 
 /** 同時に走らせる合成の上限(接続集中による失敗を防ぐ) */
 const MAX_SYNTH_IN_FLIGHT = 2;
@@ -221,11 +231,22 @@ let synthInFlight = 0;
 /** 再生中の行(待ち行列クリアの対象から外すため) */
 let playingItem: SpeechItem | null = null;
 
-/** キューの先頭から順に、同時上限まで合成を開始する */
-function ensureSynthesis(): void {
+/** 再生候補の中で最も優先な行(優先度→投入順)。再生中・合成待ちの行は pump が管理する */
+function pickNext(exclude?: SpeechItem): SpeechItem | null {
+  let best: SpeechItem | null = null;
   for (const item of queue) {
+    if (item.dropped || item === exclude) continue;
+    if (!best || item.prio < best.prio || (item.prio === best.prio && item.seq < best.seq)) best = item;
+  }
+  return best;
+}
+
+/** 優先順に、同時上限まで合成を開始する */
+function ensureSynthesis(): void {
+  const ordered = [...queue].filter((i) => !i.dropped).sort((a, b) => a.prio - b.prio || a.seq - b.seq);
+  for (const item of ordered) {
     if (synthInFlight >= MAX_SYNTH_IN_FLIGHT) break;
-    if (item.blob || item.dropped) continue;
+    if (item.blob) continue;
     synthInFlight++;
     const p = synthesize(item.text, item.speaker);
     p.catch(() => undefined); // 実際のエラー処理は pump 側で行う(未処理拒否の警告回避)
@@ -291,27 +312,50 @@ async function playBlob(blob: Blob): Promise<void> {
   }
 }
 
+/** pump が合成の完了を待っている行(監視側が誤って切り捨てないため) */
+let awaitingItem: SpeechItem | null = null;
+
+/**
+ * 合成の完了を待つ。途中で行が破棄されたら待つのをやめる。
+ * 破棄された行の合成(最大60秒)を待ち続けると、その間ずっと無音になり、
+ * ターン切り替えのたびにキュー掃除が入る観戦では一生喋らなくなる事故があった
+ */
+async function awaitBlob(item: SpeechItem): Promise<Blob | null> {
+  const p = item.blob ?? synthesize(item.text, item.speaker);
+  return Promise.race([
+    p,
+    (async (): Promise<null> => {
+      while (!item.dropped) await new Promise((r) => setTimeout(r, 150));
+      return null;
+    })(),
+  ]);
+}
+
 async function pump(): Promise<void> {
   if (playing) return;
   playing = true;
   try {
-    while (queue.length > 0) {
+    for (;;) {
       ensureSynthesis();
-      const item = queue[0];
-      let blob: Blob;
+      const item = pickNext();
+      if (!item) break;
+      awaitingItem = item;
+      let blob: Blob | null;
       try {
-        blob = await (item.blob ?? synthesize(item.text, item.speaker));
+        blob = await awaitBlob(item);
       } catch (e) {
         // 1行の合成失敗で全体を止めない。その行だけ飛ばして次へ進む
-        // (以前はここでキューを全消去していたため、ターンが替わっても喋らなくなることがあった)
         reportError(e instanceof Error ? e.message : 'VOICEVOXの音声合成に失敗しました。音声は出ません(字幕ログは動作します)。');
+        item.dropped = true;
         const ix = queue.indexOf(item);
         if (ix >= 0) queue.splice(ix, 1);
+        awaitingItem = null;
         continue;
       }
+      awaitingItem = null;
       const ix = queue.indexOf(item);
       if (ix >= 0) queue.splice(ix, 1);
-      if (item.dropped) continue; // 待ちの間に優先度の高い行へ差し替えられた
+      if (item.dropped || blob === null) continue; // 待ちの間に破棄された行は喋らない
       errorReported = false; // 合成が成功したら、次回の失敗は再び知らせる
       playingItem = item;
       markProgress();
@@ -331,58 +375,79 @@ async function pump(): Promise<void> {
   }
 }
 
-/** 読み上げキューに追加する。合成は同時2件まで順番に開始し、再生と並行して進む */
-export function speak(text: string, speaker: number = FALLBACK_SPEAKER, channel: SpeechChannel = 'enemy', tag?: string): void {
+/** 1行の目安の長さ(文字数)。これより長い行は句読点で区切って合成に小分けに投げる */
+const CHUNK_CHARS = 36;
+/** 待ち行列に溜めてよい読み上げ時間の上限(秒)。超えたら低優先度から間引く */
+const MAX_BACKLOG_SEC = 75;
+/** 読み上げ速度の見積もり(秒/文字) */
+const SEC_PER_CHAR = 0.16;
+
+/** 長いセリフを句読点(。)、次に読点(、)で区切り、CHUNK_CHARS 以内の塊に分ける */
+function splitLine(text: string): string[] {
+  const rough = text.split(/(?<=。)/).map((s) => s.trim()).filter((s) => s.length > 0);
+  const out: string[] = [];
+  for (const part of rough) {
+    if (part.length <= CHUNK_CHARS) { out.push(part); continue; }
+    let cur = '';
+    for (const seg of part.split(/(?<=、)/)) {
+      if (cur.length + seg.length > CHUNK_CHARS && cur.length > 0) { out.push(cur); cur = seg; }
+      else cur += seg;
+    }
+    if (cur.length > 0) out.push(cur);
+  }
+  return out.length > 0 ? out : [text];
+}
+
+/**
+ * 読み上げキューに追加する。合成は同時2件まで優先順に開始し、再生と並行して進む。
+ * 行は分割して小分けに合成するため、最初の音が早く出る。
+ * 待ち行列の滞留が MAX_BACKLOG_SEC を超えたら、低優先度(状況→生産→戦闘)の
+ * 古い行から間引く(作戦目標は間引かない)
+ */
+export function speak(text: string, speaker: number = FALLBACK_SPEAKER, channel: SpeechChannel = 'enemy', prio: SpeechPriority = 'combat'): void {
   startWatchdog();
   markProgress();
-  queue.push({ text, speaker, channel, tag });
+  const prioNum = PRIO_NUM[prio];
+  for (const chunk of splitLine(text)) {
+    queue.push({ text: chunk, speaker, channel, prio: prioNum, seq: nextSeq++ });
+  }
   ensureSynthesis();
-  // 溜まりすぎた場合の間引き: まず状況読み上げ(tagつき)から、それでも多ければ古い待ち行から。
-  // 以前は上限10件で古い順に消していたため、作戦会議などの戦略目標の行が真っ先に消えていた
-  while (queue.length > 30) {
-    const sitIx = queue.findIndex((q, i) => i > 0 && q.tag === 'situation');
-    if (sitIx >= 0) { queue[sitIx].dropped = true; queue.splice(sitIx, 1); continue; }
-    queue[1].dropped = true;
-    queue.splice(1, 1);
+  // 間引き: 滞留時間の見積もりが上限を超える間、最下位の待ち行を古い順に外す
+  const waitingSecs = (): number => queue
+    .filter((q) => q !== playingItem && q !== awaitingItem)
+    .reduce((s, q) => s + q.text.length * SEC_PER_CHAR, 0);
+  while (waitingSecs() > MAX_BACKLOG_SEC) {
+    let worst: SpeechItem | null = null;
+    for (const q of queue) {
+      if (q === playingItem || q === awaitingItem || q.prio === 0) continue;
+      if (!worst || q.prio > worst.prio || (q.prio === worst.prio && q.seq < worst.seq)) worst = q;
+    }
+    if (!worst) break;
+    worst.dropped = true;
+    queue.splice(queue.indexOf(worst), 1);
   }
   void pump();
 }
 
-/** 指定タグの待ち行列(再生中を除く)を外す。戦略目標の行が来たら状況読み上げを譲らせるために使う */
-export function dropQueued(tag: string): void {
-  for (let i = queue.length - 1; i >= 1; i--) {
-    if (queue[i].tag === tag) {
-      queue[i].dropped = true;
+/** 指定した優先度の待ち行列(再生中・合成待ちを除く)を外す。新しい状況行が来たら古い状況行を譲らせるために使う */
+export function dropQueuedPrio(prio: SpeechPriority): void {
+  const n = PRIO_NUM[prio];
+  for (let i = queue.length - 1; i >= 0; i--) {
+    const q = queue[i];
+    if (q.prio === n && q !== playingItem && q !== awaitingItem) {
+      q.dropped = true;
       queue.splice(i, 1);
     }
   }
-  // 先頭が合成待ちの間に外された場合も再生しない
-  if (queue[0]?.tag === tag && !playing) queue[0].dropped = true;
 }
 
-/** 再生中以外の待ち行列をすべて外す。ターン開始時に前のターンの残りを消し、
- * 状況読み上げがすぐ始まるようにするために使う */
-export function clearWaiting(): void {
-  for (let i = queue.length - 1; i >= 0; i--) {
-    if (queue[i] === playingItem) continue;
-    queue[i].dropped = true;
-    queue.splice(i, 1);
-  }
-}
-
-/**
- * ターン開始時のキュー初期化: 前ターンの待ち行列を消し、再生中の行も打ち切る。
- * これをしないと、前ターンの長い読み上げが終わるまで状況読み上げが始まらない
- */
-export function beginTurnQueue(): void {
-  clearWaiting();
-  playInterrupt?.();
-}
 
 // ---------- 無音の監視(詰まり検知) ----------
 // 合成リクエストが返ってこない等でキューが止まると、その後ずっと無音になる。
 // 定期的に「待ち行列があるのに再生も合成も進んでいない」状態を検知し、
-// 先頭の行を切り捨てて再開する(セリフのキューを差し込み直す)
+// 待ち行列の最下位の行を切り捨てて再開する。
+// 再生中・合成待ちの行は切り捨てない(それをやると pump が待ちぼうけになり、
+// かえって無音が続く事故があった)
 let lastProgressAt = Date.now();
 let watchdogStarted = false;
 function markProgress(): void {
@@ -392,12 +457,15 @@ function startWatchdog(): void {
   if (watchdogStarted) return;
   watchdogStarted = true;
   setInterval(() => {
-    if (queue.length === 0 || playingItem) return;
+    if (queue.length === 0 || playingItem || awaitingItem) return;
     if (Date.now() - lastProgressAt < 15000) return;
-    // 詰まっている先頭の行を切り捨てて、合成と再生を再開する
-    const stuck = queue[0];
-    stuck.dropped = true;
-    queue.splice(0, 1);
+    let worst: SpeechItem | null = null;
+    for (const q of queue) {
+      if (!worst || q.prio > worst.prio || (q.prio === worst.prio && q.seq < worst.seq)) worst = q;
+    }
+    if (!worst) return;
+    worst.dropped = true;
+    queue.splice(queue.indexOf(worst), 1);
     markProgress();
     ensureSynthesis();
     void pump();

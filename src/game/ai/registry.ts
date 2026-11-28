@@ -13,7 +13,7 @@ export interface AiEntry {
 }
 
 export const AI_LIST: AiEntry[] = [
-  { id: 'v31', name: 'v31(ハイブリッド・護衛あり)', supportsStream: true },
+  { id: 'v32', name: 'v32(歩兵基準・護衛)', supportsStream: true },
   { id: 'v29', name: 'v29(逐次実行・単一案)', supportsStream: true },
   { id: 'v28', name: 'v28(複数案・最良選択)', supportsStream: false },
 ];

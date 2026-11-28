@@ -3,7 +3,7 @@ import { createGame } from '../state';
 import { applySave } from '../save';
 import { playTurn as playTurnV28, PERSONALITIES as PERSONALITIES_V28 } from './v28/planner';
 import { playTurn as playTurnV29, PERSONALITIES as PERSONALITIES_V29 } from './v29/planner';
-import { playTurn as playTurnV31, PERSONALITIES as PERSONALITIES_V31 } from './v31/planner';
+import { playTurn as playTurnV32, PERSONALITIES as PERSONALITIES_V32 } from './v32/planner';
 import { aiEntry } from './registry';
 import type { AiAction, Personality, PlanOptions, PlanResult } from './types';
 import type { Game, Side } from '../types';
@@ -25,7 +25,7 @@ interface AiModule {
 const AI_MODULES: Record<string, AiModule> = {
   v28: { playTurn: playTurnV28, PERSONALITIES: PERSONALITIES_V28 },
   v29: { playTurn: playTurnV29, PERSONALITIES: PERSONALITIES_V29 },
-  v31: { playTurn: playTurnV31, PERSONALITIES: PERSONALITIES_V31 },
+  v32: { playTurn: playTurnV32, PERSONALITIES: PERSONALITIES_V32 },
 };
 
 let stopRequested = false;
