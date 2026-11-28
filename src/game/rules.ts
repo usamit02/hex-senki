@@ -400,7 +400,8 @@ export function canProduce(g: Game, side: Side, kind: string, t: Tile, aiExecuti
   const airport = g.airports.find((a) => a.hexId === t.id);
   // town と同一ヘックスの空港は空港として扱わない(編集アプリでも同一ヘックス不可)
   const atOwnedAirport = t.airport && !townAt(g, t) && airport?.owner === side;
-  if (def.fighter) {
+  // 戦闘機は空港以外では生産できない(fighter フラグ、またはカテゴリ jet)
+  if (def.fighter || def.category === 'jet') {
     if (!atOwnedAirport) return false;
   } else if (def.domain === 'air') {
     if (!producibleHexKeys(g, side).has(key(t)) && !atOwnedAirport) return false;

@@ -140,8 +140,9 @@ export async function checkVoicevox(speaker: number = FALLBACK_SPEAKER): Promise
 
 /**
  * 音声合成だけを行う(再生はしない)。失敗したら理由つきの Error を投げる。
- * speak() の時点で合成を開始しておくことで、前の行を再生している間に
- * 次の行の合成が進み、行間の無音時間が短くなる(パイプライン化)
+ * 合成は同時に2件までしか走らせない(ensureSynthesis 側で制御する)。
+ * 行を一斉に合成しにいくと接続が集中して、エンジン側が捌ききれず
+ * 「接続できません」エラーが多発したため
  */
 async function synthesize(text: string, speaker: number): Promise<Blob> {
   let q: Response;
@@ -152,7 +153,17 @@ async function synthesize(text: string, speaker: number): Promise<Blob> {
       5000,
     );
   } catch {
-    throw new Error('VOICEVOXに接続できません。VOICEVOXを起動していない場合、音声は出ません(字幕ログは動作します)。');
+    // 一時的な接続失敗は1回だけ再試行する
+    await new Promise((r) => setTimeout(r, 600));
+    try {
+      q = await fetchWithTimeout(
+        `${BASE}/audio_query?text=${encodeURIComponent(text)}&speaker=${speaker}`,
+        { method: 'POST' },
+        5000,
+      );
+    } catch {
+      throw new Error('VOICEVOXに接続できません。VOICEVOXを起動していない場合、音声は出ません(字幕ログは動作します)。');
+    }
   }
   if (!q.ok) throw new Error(`VOICEVOXがエラーを返しました(HTTP ${q.status})。音声は出ません(字幕ログは動作します)。`);
   const query = await q.json();
@@ -174,11 +185,33 @@ interface SpeechItem {
   text: string;
   speaker: number;
   channel: SpeechChannel;
-  blob: Promise<Blob>;
+  /** 合成結果。合成の開始は ensureSynthesis が順番に制御する */
+  blob?: Promise<Blob>;
   /** 用途タグ(状況読み上げは 'situation')。戦略目標などの本命の行が来たら待ち行列から外せる */
   tag?: string;
   /** 待ち行列から外された行は再生しない */
   dropped?: boolean;
+}
+
+/** 同時に走らせる合成の上限(接続集中による失敗を防ぐ) */
+const MAX_SYNTH_IN_FLIGHT = 2;
+let synthInFlight = 0;
+/** 再生中の行(待ち行列クリアの対象から外すため) */
+let playingItem: SpeechItem | null = null;
+
+/** キューの先頭から順に、同時上限まで合成を開始する */
+function ensureSynthesis(): void {
+  for (const item of queue) {
+    if (synthInFlight >= MAX_SYNTH_IN_FLIGHT) break;
+    if (item.blob || item.dropped) continue;
+    synthInFlight++;
+    const p = synthesize(item.text, item.speaker);
+    p.catch(() => undefined); // 実際のエラー処理は pump 側で行う(未処理拒否の警告回避)
+    item.blob = p.then(
+      (b) => { synthInFlight--; ensureSynthesis(); return b; },
+      (e: unknown) => { synthInFlight--; ensureSynthesis(); throw e; },
+    );
+  }
 }
 
 /** 読み上げの開始/終了の通知先(司令官の立ち絵表示など) */
@@ -241,10 +274,11 @@ async function pump(): Promise<void> {
   playing = true;
   try {
     while (queue.length > 0) {
+      ensureSynthesis();
       const item = queue[0];
       let blob: Blob;
       try {
-        blob = await item.blob; // 合成は speak() 時点で開始済み。到着を待つだけ
+        blob = await (item.blob ?? synthesize(item.text, item.speaker));
       } catch (e) {
         // 1行の合成失敗で全体を止めない。その行だけ飛ばして次へ進む
         // (以前はここでキューを全消去していたため、ターンが替わっても喋らなくなることがあった)
@@ -257,12 +291,14 @@ async function pump(): Promise<void> {
       if (ix >= 0) queue.splice(ix, 1);
       if (item.dropped) continue; // 待ちの間に優先度の高い行へ差し替えられた
       errorReported = false; // 合成が成功したら、次回の失敗は再び知らせる
+      playingItem = item;
       speechListener?.onLineStart(item.text, item.channel);
       try {
         await playBlob(blob);
       } catch {
         reportError('VOICEVOXの音声再生で問題が発生しました。音声は出ません(字幕ログは動作します)。');
       }
+      playingItem = null;
       speechListener?.onLineEnd(item.text, item.channel);
     }
   } finally {
@@ -271,11 +307,10 @@ async function pump(): Promise<void> {
   }
 }
 
-/** 読み上げキューに追加する。合成はこの時点で開始し、再生と並行して進む */
+/** 読み上げキューに追加する。合成は同時2件まで順番に開始し、再生と並行して進む */
 export function speak(text: string, speaker: number = FALLBACK_SPEAKER, channel: SpeechChannel = 'enemy', tag?: string): void {
-  const blob = synthesize(text, speaker);
-  blob.catch(() => undefined); // 実際のエラー処理は pump 側で行う(未処理拒否の警告回避)
-  queue.push({ text, speaker, channel, blob, tag });
+  queue.push({ text, speaker, channel, tag });
+  ensureSynthesis();
   // 溜まりすぎた場合の間引き: まず状況読み上げ(tagつき)から、それでも多ければ古い待ち行から。
   // 以前は上限10件で古い順に消していたため、作戦会議などの戦略目標の行が真っ先に消えていた
   while (queue.length > 30) {
@@ -297,6 +332,16 @@ export function dropQueued(tag: string): void {
   }
   // 先頭が合成待ちの間に外された場合も再生しない
   if (queue[0]?.tag === tag && !playing) queue[0].dropped = true;
+}
+
+/** 再生中以外の待ち行列をすべて外す。ターン開始時に前のターンの残りを消し、
+ * 状況読み上げがすぐ始まるようにするために使う */
+export function clearWaiting(): void {
+  for (let i = queue.length - 1; i >= 0; i--) {
+    if (queue[i] === playingItem) continue;
+    queue[i].dropped = true;
+    queue.splice(i, 1);
+  }
 }
 
 /** キューと再生を止める */

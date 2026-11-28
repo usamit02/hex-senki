@@ -1,4 +1,4 @@
-import type { HexMapData, MapConfig, MapData, ThemeId, UnitDefs } from './types';
+import type { HexMapData, MapConfig, MapData, Side, ThemeId, UnitDefs } from './types';
 import { validateUnitDefs } from './validate';
 
 const base = import.meta.env.BASE_URL;
@@ -55,9 +55,16 @@ export async function loadMap(): Promise<MapData> {
     fetchJson<MapConfig>(MAP_FILE),
     fetchJson<HexMapData>(HEX_FILE),
   ]);
+  // 首都指定は citys が正式形だが、cities に { p, e } の形で書かれたファイルも受け付ける
+  const rawCities: unknown = (map as { cities?: unknown }).cities;
+  const citys = map.citys
+    ?? (rawCities && typeof rawCities === 'object' && !Array.isArray(rawCities)
+      ? (rawCities as Partial<Record<Side, string>>)
+      : undefined);
   return {
     ...map,
-    cities: map.cities ?? [],
+    citys,
+    cities: Array.isArray(rawCities) ? rawCities : [],
     hexes: hexMap.hexes,
     roads: hexMap.roads ?? [],
     rivers: hexMap.rivers ?? [],

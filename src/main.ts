@@ -11,8 +11,8 @@ import { UnitModelLayer } from './view/render3d';
 import { canProduce, produce, reachable, resupplyFromAdjacentSupply, settleCaptures } from './game/rules';
 import { airportAt, createGame, tileAt, townAt, unitAt } from './game/state';
 import { showSettingsScreen } from './ui/settings';
-import { playAttackSfx, playCaptureSfx, playExplosionSfx, playMoveSfx } from './audio/sfx';
-import { checkVoicevox, dropQueued, setSpeechListener, setVoiceErrorHandler, speak, stopSpeaking, unlockAudio, type SpeechChannel } from './audio/voicevox';
+import { playAttackSfx, playCaptureSfx, playExplosionSfx, playMoveSfx, playTurnSfx } from './audio/sfx';
+import { checkVoicevox, clearWaiting, dropQueued, setSpeechListener, setVoiceErrorHandler, speak, stopSpeaking, unlockAudio, type SpeechChannel } from './audio/voicevox';
 import { getTheme } from './game/themes';
 import { validateUnitDefs } from './game/validate';
 import { DEFAULT_SETTINGS, type GameSettings } from './game/types';
@@ -170,7 +170,9 @@ function newGame(): void {
 function narrate(g: Game, line: string, channel: SpeechChannel = 'enemy', tag?: string): void {
   if (g.settings.subtitles) hud.appendLog(line);
   if (g.settings.voice) {
-    const speaker = channel === 'ally' ? (g.allySpeaker ?? g.settings.voiceSpeakerAlly) : g.settings.voiceSpeaker;
+    const speaker = channel === 'ally'
+      ? allyStyleSpeaker(g.allySpeaker ?? g.settings.voiceSpeakerAlly, line)
+      : g.settings.voiceSpeaker;
     speak(line, speaker, channel, tag);
   }
 }
@@ -178,6 +180,8 @@ function narrate(g: Game, line: string, channel: SpeechChannel = 'enemy', tag?: 
 /** CPUターン開始時の状況読み上げ(状況表の内容を1行で。思考の待ち時間を持たせる)。
  * tag='situation' を付け、戦略目標の行が来たら待ち行列から譲らせる(優先して喋らせる) */
 function narrateSituation(g: Game, channel: SpeechChannel = 'enemy'): void {
+  // 前のターンの読み上げ残りを消し、状況読み上げがターン開始直後に始まるようにする
+  clearWaiting();
   const pT = g.towns.filter((t) => t.owner === 'p').length;
   const eT = g.towns.filter((t) => t.owner === 'e').length;
   const pU = g.units.filter((u) => u.side === 'p' && u.hp > 0).length;
@@ -194,7 +198,20 @@ let cmdSpeakers: Record<SpeechChannel, number> = { enemy: 8, ally: 3 };
 function portraitSet(speaker: number): { base: string; ext: string } | null {
   if (speaker === 8) return { base: 'portraits/tsumugi', ext: 'png' };
   if (speaker === 3) return { base: 'portraits/zunda', ext: 'jpg' };
+  if (speaker >= 23 && speaker <= 26) return { base: 'portraits/whitecul', ext: 'png' }; // WhiteCUL(全スタイル共通)
   return null;
+}
+
+/**
+ * 師団長(WhiteCUL)のスタイル使い分け: セリフ内容で ノーマル(23)/たのしい(24)/かなしい(25)/びえーん(26) を選ぶ。
+ * WhiteCUL 以外の声を選んでいる場合はそのまま使う
+ */
+function allyStyleSpeaker(base: number, line: string): number {
+  if (base < 23 || base > 26) return base;
+  if (/全滅|陥落/.test(line)) return 26; // びえーん
+  if (/撃破された|失った|危機|後退|苦しい|まずい/.test(line)) return 25; // かなしい
+  if (/撃破|占領|確保|制圧|よし|いいぞ/.test(line)) return 24; // たのしい
+  return 23; // ノーマル
 }
 
 function expressionFor(line: string): CmdExpression {
@@ -237,7 +254,7 @@ function setupCommander(): void {
   cmdPanels.enemy = { ...cmdPanels.enemy, box: document.getElementById('commander'), img: document.getElementById('cmd-img') as HTMLImageElement | null, bubble: document.getElementById('cmd-bubble') };
   cmdPanels.ally = { ...cmdPanels.ally, box: document.getElementById('commander-ally'), img: document.getElementById('cmd-img-ally') as HTMLImageElement | null, bubble: document.getElementById('cmd-bubble-ally') };
   // 口パク・表情用の画像を先読みしておく(切り替え時のちらつき防止)
-  for (const speaker of [8, 3]) {
+  for (const speaker of [8, 3, 23]) {
     const set = portraitSet(speaker);
     if (!set) continue;
     for (const e of ['normal', 'smile', 'troubled'] as CmdExpression[]) {
@@ -381,6 +398,7 @@ function endTurn(): void {
   g.reach = null;
   g.busy = true;
   beginCpuTurn(g);
+  playTurnSfx('e'); // ターン切り替えのラッパ(CPUターンは重い下降調)
   g.message = '敵のターン…';
   refresh();
   // 敵のターン開始: 敵首都を画面中央に表示する
@@ -405,6 +423,7 @@ function endTurn(): void {
       return;
     }
     finishEnemyTurn(g);
+    playTurnSfx('p'); // プレイヤーターンは明るい上昇調
     refresh();
     // プレイヤーのターン開始: 自軍首都を画面中央に表示する
     centerOnCapital('p');
@@ -441,6 +460,7 @@ async function runSpectateLoop(): Promise<void> {
     while (spectating && !g.over) {
       if (g.turn > turnCap) { cutoff = true; break; }
       g.busy = true;
+      playTurnSfx('p');
       centerOnCapital('p'); // ターン開始と同時に自首都を表示する
       g.message = `観戦中: 先手の第${g.turn}ターン(上限${turnCap}ターン)…`;
       refresh();
@@ -454,6 +474,7 @@ async function runSpectateLoop(): Promise<void> {
       refresh();
       if (g.over || !spectating) break;
       beginCpuTurn(g);
+      playTurnSfx('e');
       centerOnCapital('e'); // ターンが入れ替わった時点で即座に敵首都へ移動する(思考を待たない)
       g.message = `観戦中: 後手の第${g.turn}ターン(上限${turnCap}ターン)…`;
       refresh();

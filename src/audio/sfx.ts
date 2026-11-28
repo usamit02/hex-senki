@@ -87,6 +87,21 @@ function thumps(count: number, interval: number, freq: number, gain = 0.2): void
   }
 }
 
+/** ターン切り替えのラッパ風ファンファーレ。プレイヤーターンは明るい上昇調、CPUターンは重い下降調 */
+export function playTurnSfx(side: 'p' | 'e'): void {
+  const bugle = (freq: number, delay: number, dur: number): void => {
+    // ラッパらしく、基音+倍音を重ねた角笛のような音色にする
+    tone({ dur, type: 'sawtooth', from: freq, gain: 0.045, delay });
+    tone({ dur, type: 'square', from: freq * 2, gain: 0.018, delay });
+    tone({ dur, type: 'triangle', from: freq, gain: 0.13, delay });
+  };
+  if (side === 'p') {
+    [262, 330, 392, 523].forEach((f, i) => bugle(f, i * 0.13, i === 3 ? 0.45 : 0.17));
+  } else {
+    [392, 330, 262, 196].forEach((f, i) => bugle(f, i * 0.15, i === 3 ? 0.5 : 0.19));
+  }
+}
+
 /** 占領時の旗揚げファンファーレ(短い上昇アルペジオ) */
 export function playCaptureSfx(): void {
   const notes = [523, 659, 784, 1046];

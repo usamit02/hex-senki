@@ -1,21 +1,12 @@
 {
   "name": "札幌争奪戦",
-  "terrain": {
-    "plain": "平地",
-    "forest": "森",
-    "water": "水",
-    "mountain": "山",
-    "castle": "城",
-    "marsh": "沼",
-    "fill": null
-  },
-  "citys": {
+  "cities": {
     "p": "芦別市",
     "e": "苫小牧市"
   },
   "gold": {
-    "p": 20,
-    "e": 20
+    "p": 2000,
+    "e": 2000
   },
   "units": []
 }

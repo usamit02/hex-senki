@@ -136,6 +136,10 @@ class BoardScene extends Phaser.Scene {
   private downPos: { x: number; y: number } | null = null;
   private downButton = -1;
   private dragged = false;
+  /** ピンチ操作(2本指)の前回状態 */
+  private pinchLast: { dist: number; x: number; y: number } | null = null;
+  /** ピンチ終了直後の pointerup をクリックとして扱わないためのカウンタ */
+  private pinchSuppressUp = 0;
   private labelsVisible = true;
   private cursors: Phaser.Types.Input.Keyboard.CursorKeys | null = null;
   private wasd: Record<string, Phaser.Input.Keyboard.Key> | null = null;
@@ -448,13 +452,47 @@ class BoardScene extends Phaser.Scene {
       cam.scrollY += before.y - after.y;
     });
 
+    // タッチの2本指操作(ピンチ)を受け付けるため、ポインタを1つ追加する
+    this.input.addPointer(1);
+
     // ドラッグでスクロール / 動かなければクリックとして扱う
     this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
       this.downPos = { x: p.x, y: p.y };
       this.downButton = p.button;
       this.dragged = false;
+      const p1 = this.input.pointer1;
+      const p2 = this.input.pointer2;
+      if (p1?.isDown && p2?.isDown) {
+        // 2本目が触れた時点でピンチ開始(クリック・ドラッグとしては扱わない)
+        this.pinchLast = {
+          dist: Math.hypot(p1.x - p2.x, p1.y - p2.y),
+          x: (p1.x + p2.x) / 2,
+          y: (p1.y + p2.y) / 2,
+        };
+        this.dragged = true;
+      }
     });
     this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+      const p1 = this.input.pointer1;
+      const p2 = this.input.pointer2;
+      if (p1?.isDown && p2?.isDown && this.pinchLast) {
+        // ピンチ: 指の間隔で拡大縮小、中点の移動でスクロール
+        const dist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+        if (this.pinchLast.dist > 0 && dist > 0) {
+          const before = cam.getWorldPoint(mid.x, mid.y);
+          const zoom = Phaser.Math.Clamp(cam.zoom * (dist / this.pinchLast.dist), Math.min(this.minZoom, 3.5), 3.5);
+          cam.setZoom(zoom);
+          const after = cam.getWorldPoint(mid.x, mid.y);
+          cam.scrollX += before.x - after.x;
+          cam.scrollY += before.y - after.y;
+        }
+        cam.scrollX -= (mid.x - this.pinchLast.x) / cam.zoom;
+        cam.scrollY -= (mid.y - this.pinchLast.y) / cam.zoom;
+        this.pinchLast = { dist, x: mid.x, y: mid.y };
+        this.dragged = true;
+        return;
+      }
       if (!p.isDown || !this.downPos) return;
       const dx = p.x - (p.prevPosition?.x ?? p.x);
       const dy = p.y - (p.prevPosition?.y ?? p.y);
@@ -465,6 +503,20 @@ class BoardScene extends Phaser.Scene {
       }
     });
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
+      if (this.pinchLast) {
+        // ピンチ終了: この pointerup と、残った指の pointerup はクリックにしない
+        this.pinchLast = null;
+        this.pinchSuppressUp = 1;
+        this.downPos = null;
+        this.dragged = false;
+        return;
+      }
+      if (this.pinchSuppressUp > 0) {
+        this.pinchSuppressUp--;
+        this.downPos = null;
+        this.dragged = false;
+        return;
+      }
       const wasDrag = this.dragged;
       const button = this.downButton;
       this.downPos = null;

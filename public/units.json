@@ -6,7 +6,7 @@
       "hp": 10,
       "move": 6,
       "defense": 4,
-      "cost": 30,
+      "cost": 600,
       "fuel": 50,
       "domain": "ground",
       "category": "tank",
@@ -24,8 +24,6 @@
           "vs": {
             "sam": 1.5,
             "tank": 1,
-            "jet": 0.4,
-            "heli": 0.6,
             "infantry": 1.2,
             "supply": 1.2
           }
@@ -38,12 +36,11 @@
           "ammo": -1,
           "sfx": "gun",
           "vs": {
-            "infantry": 1.5,
+            "infantry": 1,
             "supply": 1,
-            "tank": 0.4,
+            "tank": 0.2,
             "sam": 0.5,
-            "jet": 0.3,
-            "heli": 0.5
+            "heli": 0.2
           }
         }
       ]
@@ -54,7 +51,7 @@
       "hp": 10,
       "move": 5,
       "defense": 1,
-      "cost": 25,
+      "cost": 500,
       "fuel": 60,
       "domain": "ground",
       "category": "sam",
@@ -66,16 +63,12 @@
           "name": "対空ミサイル",
           "power": 7,
           "minRange": 2,
-          "range": 3,
+          "range": 5,
           "ammo": 4,
           "sfx": "missile",
           "vs": {
             "jet": 1.8,
-            "heli": 1.8,
-            "tank": 0.5,
-            "sam": 0.6,
-            "infantry": 0.5,
-            "supply": 0.6
+            "heli": 1.8
           }
         },
         {
@@ -87,7 +80,10 @@
           "sfx": "gun",
           "vs": {
             "infantry": 1,
-            "heli": 0.6
+            "supply": 0.8,
+            "tank": 0.3,
+            "sam": 0.4,
+            "heli": 0.2
           }
         }
       ]
@@ -98,7 +94,7 @@
       "hp": 10,
       "move": 13,
       "defense": 2,
-      "cost": 90,
+      "cost": 1200,
       "fuel": 70,
       "domain": "air",
       "category": "jet",
@@ -145,7 +141,7 @@
       "hp": 10,
       "move": 8,
       "defense": 2,
-      "cost": 30,
+      "cost": 800,
       "fuel": 50,
       "domain": "air",
       "category": "heli",
@@ -155,7 +151,7 @@
       "transport": 1,
       "weapons": [
         {
-          "name": "対戦車ミサイル",
+          "name": "ミサイル",
           "power": 7,
           "minRange": 1,
           "range": 1,
@@ -163,10 +159,9 @@
           "sfx": "missile",
           "vs": {
             "tank": 1.3,
-            "infantry": 1.5,
+            "infantry": 0.5,
             "sam": 1,
             "heli": 0.8,
-            "jet": 0.5,
             "supply": 1.2
           }
         },
@@ -192,7 +187,7 @@
       "hp": 10,
       "move": 3,
       "defense": 1,
-      "cost": 10,
+      "cost": 100,
       "fuel": 100,
       "domain": "ground",
       "category": "infantry",
@@ -227,9 +222,7 @@
             "infantry": 1,
             "supply": 0.8,
             "tank": 0.3,
-            "sam": 0.4,
-            "heli": 0.4,
-            "jet": 0.2
+            "sam": 0.4
           }
         }
       ]
@@ -240,7 +233,7 @@
       "hp": 10,
       "move": 5,
       "defense": 1,
-      "cost": 30,
+      "cost": 700,
       "fuel": 60,
       "domain": "ground",
       "category": "spg",
@@ -260,9 +253,7 @@
             "sam": 1.2,
             "infantry": 1.4,
             "spg": 1,
-            "supply": 1.3,
-            "jet": 0.2,
-            "heli": 0.3
+            "supply": 1.3
           }
         }
       ]
@@ -273,7 +264,7 @@
       "hp": 10,
       "move": 9,
       "defense": 0,
-      "cost": 10,
+      "cost": 100,
       "fuel": 180,
       "domain": "ground",
       "category": "truck",
@@ -289,7 +280,7 @@
       "hp": 10,
       "move": 8,
       "defense": 0,
-      "cost": 15,
+      "cost": 200,
       "fuel": 150,
       "domain": "ground",
       "category": "supply",

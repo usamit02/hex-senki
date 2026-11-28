@@ -119,7 +119,7 @@ export const DEFAULT_SETTINGS: GameSettings = {
   aiPersonality: 'balanced',
   voice: true,
   voiceSpeaker: 8,
-  voiceSpeakerAlly: 3,
+  voiceSpeakerAlly: 23,
   subtitles: true,
 };
 
